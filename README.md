@@ -72,6 +72,7 @@ Generate a verification code.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `API_WEBSITE_URL` | Main website URL for CORS | `http://localhost:3000` |
 | `PORT` | API server port | `3001` |
-| `PAYLOAD_API_URL` | Payload CMS URL | `http://localhost:3000` |
-| `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | `http://localhost:3000` |
+| `CORS_ORIGINS` | Additional CORS origins (comma-separated) | Uses `API_WEBSITE_URL` |
+| `API_SECRET_KEY` | Secret key for bypassing rate limits | - |

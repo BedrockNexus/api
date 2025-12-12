@@ -9,7 +9,8 @@
     "start": "bun run src/index.ts"
   },
   "dependencies": {
-    "hono": "^4.7.10"
+    "hono": "^4.7.10",
+    "hono-rate-limiter": "^0.4.2"
   },
   "devDependencies": {
     "@types/bun": "^1.0.0",
