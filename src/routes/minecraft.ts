@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { pingBedrockServer } from '../lib/bedrock-ping';
 
 const app = new Hono();
 
@@ -13,39 +14,22 @@ app.get('/status', async (c) => {
   }
 
   try {
-    // Dynamic import to avoid bundling issues
-    const bedrockProtocol = await import('bedrock-protocol').catch(() => null);
+    const result = await pingBedrockServer(ip, port, timeout);
     
-    if (!bedrockProtocol) {
-      return c.json({ error: 'Server query not available' }, 503);
+    if (!result.online) {
+      return c.json({ online: false, error: 'Server offline or unreachable' });
     }
 
-    const result = await new Promise<any>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error('Query timeout'))
-      }, timeout);
-
-      bedrockProtocol.ping({ host: ip, port })
-        .then((response: any) => {
-          clearTimeout(timeoutId)
-          resolve({
-            online: true,
-            players: {
-              online: response.playersOnline || 0,
-              max: response.playersMax || 0,
-            },
-            motd: response.motd || '',
-            version: response.version || '',
-            gamemode: response.gamemode || '',
-          })
-        })
-        .catch((err: Error) => {
-          clearTimeout(timeoutId)
-          reject(err)
-        })
+    return c.json({
+      online: true,
+      players: {
+        online: result.playerCount || 0,
+        max: result.maxPlayers || 0,
+      },
+      motd: result.motd || '',
+      version: result.version || '',
+      gamemode: result.gamemode || '',
     });
-
-    return c.json(result);
   } catch (error) {
     return c.json({ online: false, error: 'Server offline or unreachable' });
   }
