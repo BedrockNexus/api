@@ -3,6 +3,17 @@ import { pingBedrockServer } from '../lib/bedrock-ping';
 
 const app = new Hono();
 
+const apiKey = process.env.API_SECRET_KEY;
+
+// Middleware to require API key for protected routes
+const requireApiKey = async (c: Parameters<Parameters<typeof app.use>[1]>[0], next: () => Promise<void>) => {
+  const requestKey = c.req.header('X-API-Key');
+  if (!apiKey || requestKey !== apiKey) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  return next();
+};
+
 // Query Bedrock server status
 app.get('/status', async (c) => {
   const ip = c.req.query('ip');
@@ -29,14 +40,19 @@ app.get('/status', async (c) => {
       motd: result.motd || '',
       version: result.version || '',
       gamemode: result.gamemode || '',
+      protocolVersion: result.protocolVersion || 0,
+      edition: result.edition || '',
+      mapName: result.mapName || '',
+      serverId: result.serverId || '',
+      port: result.port || port,
     });
   } catch (error) {
     return c.json({ online: false, error: 'Server offline or unreachable' });
   }
 })
 
-// Verify DNS TXT record for server ownership
-app.get('/verify', async (c) => {
+// Verify DNS TXT record for server ownership (requires API key)
+app.get('/verify', requireApiKey, async (c) => {
   const ip = c.req.query('ip');
   const code = c.req.query('code');
 
@@ -73,8 +89,8 @@ app.get('/verify', async (c) => {
   }
 })
 
-// Generate verification code
-app.get('/generate-code', async (c) => {
+// Generate verification code (requires API key)
+app.get('/generate-code', requireApiKey, async (c) => {
   const code = Math.random().toString(36).substring(2, 10).toUpperCase();
   return c.json({ code });
 })

@@ -6,15 +6,10 @@ import minecraft from './routes/minecraft'
 
 const app = new Hono()
 
-// Configuration
-const websiteUrl = process.env.API_WEBSITE_URL || 'http://localhost:3000'
-const corsOrigins = process.env.CORS_ORIGINS?.split(',') || [websiteUrl]
-
 // Middleware
 app.use('*', logger())
 app.use('*', cors({
-  origin: corsOrigins,
-  credentials: true,
+  origin: '*', // Public API - allow all origins
 }))
 
 // Rate limiting - skip for requests with valid API key
@@ -53,7 +48,7 @@ app.get('/health', (c) => {
 })
 
 // Routes
-app.route('/api/minecraft', minecraft)
+app.route('/minecraft', minecraft)
 
 // Start server
 const port = parseInt(process.env.PORT || '3001', 10)
