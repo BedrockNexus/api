@@ -3,6 +3,8 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { rateLimiter } from 'hono-rate-limiter'
 import minecraft from './routes/minecraft'
+import serverVerify from './routes/server-verify'
+import votes from './routes/votes'
 
 const app = new Hono()
 
@@ -49,6 +51,8 @@ app.get('/health', (c) => {
 
 // Routes
 app.route('/minecraft', minecraft)
+app.route('/server-verify', serverVerify)
+app.route('/votes', votes)
 
 // Start server
 const port = parseInt(process.env.PORT || '3001', 10)

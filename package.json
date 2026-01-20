@@ -9,6 +9,7 @@
     "start": "bun run src/index.ts"
   },
   "dependencies": {
+    "convex": "^1.25.0",
     "hono": "^4.7.10",
     "hono-rate-limiter": "^0.4.2"
   },
