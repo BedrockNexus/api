@@ -80,6 +80,7 @@ app.get('/monthly-leaderboard', async (c) => {
 	}
 
 	const serverId = c.req.query('serverId')
+	const limit = parseLimit(c.req.query('limit'), 100)
 	if (!serverId) {
 		return c.json({ error: 'serverId is required' }, 400)
 	}
@@ -87,13 +88,19 @@ app.get('/monthly-leaderboard', async (c) => {
 	try {
 		const result = await convexQuery(
 			client,
-			'functions/servers/votes:getServerVotesThisMonth',
-			{ serverId },
+			'functions/servers/votes:listMonthlyServerVoters',
+			{
+				serverId,
+				limit,
+			},
 		)
 		return c.json(result)
 	} catch (error) {
-		console.error('Monthly votes failed', error)
-		return c.json({ error: 'Failed to fetch monthly votes' }, 500)
+		console.error('Monthly vote leaderboard failed', error)
+		return c.json(
+			{ error: 'Failed to fetch monthly vote leaderboard' },
+			500,
+		)
 	}
 })
 
