@@ -1,66 +1,11 @@
-import { Hono } from 'hono'
-import { cors } from 'hono/cors'
-import { logger } from 'hono/logger'
-import { rateLimiter } from 'hono-rate-limiter'
-import minecraft from './routes/minecraft'
-import serverVerify from './routes/server-verify'
-import votes from './routes/votes'
+import { createApp } from './app'
 
-const app = new Hono()
+const app = createApp()
+const port = Number.parseInt(process.env.PORT ?? '3001', 10)
 
-// Middleware
-app.use('*', logger())
-app.use('*', cors({
-  origin: '*', // Public API - allow all origins
-}))
-
-// Rate limiting - skip for requests with valid API key
-const apiKey = process.env.API_SECRET_KEY
-
-app.use('*', async (c, next) => {
-  // Skip rate limiting for internal requests with valid API key
-  const requestKey = c.req.header('X-API-Key')
-  if (requestKey === apiKey) {
-    return next()
-  }
-
-  // Apply rate limiting for everyone else
-  const limiter = rateLimiter({
-    windowMs: 60 * 1000, // 1 minute
-    limit: 10, // 10 requests per minute
-    standardHeaders: 'draft-6',
-    keyGenerator: (c) => c.req.header('x-forwarded-for') || c.req.header('cf-connecting-ip') || 'anonymous',
-    message: { error: 'Too many requests, please try again later' },
-  })
-
-  return limiter(c, next)
-})
-
-// Health check
-app.get('/', (c) => {
-  return c.json({ 
-    status: 'ok', 
-    service: 'BedrockNexus API',
-    version: '1.0.0'
-  })
-})
-
-app.get('/health', (c) => {
-  return c.json({ status: 'healthy' })
-})
-
-// Routes
-app.route('/minecraft', minecraft)
-app.route('/server-verify', serverVerify)
-app.route('/votes', votes)
-
-// Start server
-const port = parseInt(process.env.PORT || '3001', 10)
-const apiUrl = process.env.API_WEBSITE_URL ? `${process.env.API_WEBSITE_URL}:${port}` : `http://localhost:${port}`
-
-console.log(`🚀 BedrockNexus API running on ${apiUrl}`)
+console.log(`BedrockNexus API listening on port ${port}`)
 
 export default {
-  port,
-  fetch: app.fetch,
+	fetch: app.fetch,
+	port,
 }

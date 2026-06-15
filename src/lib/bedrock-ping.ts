@@ -1,97 +1,165 @@
-import dgram from 'dgram'
+import { randomBytes } from 'node:crypto'
+import dgram from 'node:dgram'
+import ipaddr from 'ipaddr.js'
+import { resolvePublicTarget } from './public-target'
 
 const RAKNET_MAGIC = Buffer.from([
-  0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe,
-  0xfd, 0xfd, 0xfd, 0xfd, 0x12, 0x34, 0x56, 0x78
+	0x00, 0xff, 0xff, 0x00, 0xfe, 0xfe, 0xfe, 0xfe, 0xfd, 0xfd, 0xfd, 0xfd, 0x12,
+	0x34, 0x56, 0x78,
 ])
+const PONG_HEADER_LENGTH = 35
 
-interface BedrockServerInfo {
-  online: boolean
-  edition?: string
-  motd?: string
-  protocolVersion?: number
-  version?: string
-  playerCount?: number
-  maxPlayers?: number
-  serverId?: string
-  mapName?: string
-  gamemode?: string
-  port?: number
+export interface BedrockServerInfo {
+	edition?: string
+	gamemode?: string
+	geyserDetected?: boolean
+	mapName?: string
+	maxPlayers?: number
+	motd?: string
+	online: boolean
+	playerCount?: number
+	port?: number
+	protocolVersion?: number
+	serverId?: string
+	version?: string
 }
 
-export function pingBedrockServer(host: string, port: number = 19132, timeout: number = 5000): Promise<BedrockServerInfo> {
-  return new Promise((resolve) => {
-    const socket = dgram.createSocket('udp4')
-    let resolved = false
+function normalizeSoftwareMarker(value: string | undefined) {
+	return (value ?? '').replaceAll(/§./g, '').trim().toLowerCase()
+}
 
-    const cleanup = () => {
-      if (!resolved) {
-        resolved = true
-        socket.close()
-      }
-    }
+export function detectGeyserFromMotd(
+	motd: string | undefined,
+	subMotd: string | undefined,
+) {
+	const primary = normalizeSoftwareMarker(motd)
+	const secondary = normalizeSoftwareMarker(subMotd)
 
-    const timer = setTimeout(() => {
-      cleanup()
-      resolve({ online: false })
-    }, timeout)
+	return (
+		primary === 'geyser' ||
+		primary === 'geysermc' ||
+		secondary === 'geyser' ||
+		secondary === 'geysermc' ||
+		secondary.startsWith('another geyser server') ||
+		primary.includes('geysermc.org') ||
+		secondary.includes('geysermc.org')
+	)
+}
 
-    socket.on('error', () => {
-      clearTimeout(timer)
-      cleanup()
-      resolve({ online: false })
-    })
+function parseNumber(value: string | undefined) {
+	if (!value) {
+		return undefined
+	}
+	const number = Number.parseInt(value, 10)
+	return Number.isFinite(number) ? number : undefined
+}
 
-    socket.on('message', (msg) => {
-      clearTimeout(timer)
-      cleanup()
+function addressesMatch(left: string, right: string) {
+	try {
+		return ipaddr.process(left).toString() === ipaddr.process(right).toString()
+	} catch {
+		return false
+	}
+}
 
-      try {
-        // Response format: [1 byte ID][8 bytes time][8 bytes server GUID][16 bytes magic][string length][string data]
-        if (msg[0] !== 0x1c) {
-          resolve({ online: false })
-          return
-        }
+export function parseBedrockPong(
+	message: Buffer,
+	expectedTimestamp: bigint,
+): BedrockServerInfo | null {
+	if (
+		message.length < PONG_HEADER_LENGTH ||
+		message[0] !== 0x1c ||
+		message.readBigInt64BE(1) !== expectedTimestamp ||
+		!message.subarray(17, 33).equals(RAKNET_MAGIC)
+	) {
+		return null
+	}
 
-        // Skip: ID(1) + time(8) + serverGUID(8) + magic(16) + stringLength(2)
-        const dataOffset = 35
-        const serverInfo = msg.slice(dataOffset).toString('utf8')
-        const parts = serverInfo.split(';')
+	const payloadLength = message.readUInt16BE(33)
+	if (
+		payloadLength < 1 ||
+		message.length < PONG_HEADER_LENGTH + payloadLength
+	) {
+		return null
+	}
 
-        // Format: Edition;MOTD;ProtocolVersion;Version;Players;MaxPlayers;ServerID;MapName;Gamemode;NintendoLimited;Port;Port6
-        resolve({
-          online: true,
-          edition: parts[0],
-          motd: parts[1],
-          protocolVersion: parseInt(parts[2]) || undefined,
-          version: parts[3],
-          playerCount: parseInt(parts[4]) || 0,
-          maxPlayers: parseInt(parts[5]) || 0,
-          serverId: parts[6],
-          mapName: parts[7],
-          gamemode: parts[8],
-          port: parseInt(parts[10]) || port
-        })
-      } catch {
-        resolve({ online: true }) // Got response but couldn't parse
-      }
-    })
+	const parts = message
+		.subarray(PONG_HEADER_LENGTH, PONG_HEADER_LENGTH + payloadLength)
+		.toString('utf8')
+		.split(';')
 
-    // Build unconnected ping packet
-    const packet = Buffer.alloc(33)
-    packet[0] = 0x01 // Unconnected Ping
-    
-    // Timestamp (8 bytes)
-    const time = BigInt(Date.now())
-    packet.writeBigInt64BE(time, 1)
-    
-    // Magic (16 bytes)
-    RAKNET_MAGIC.copy(packet, 9)
-    
-    // Client GUID (8 bytes)
-    const clientGuid = BigInt(Math.floor(Math.random() * 0xffffffff))
-    packet.writeBigInt64BE(clientGuid, 25)
+	if (parts.length < 6 || parts[0] !== 'MCPE') {
+		return null
+	}
 
-    socket.send(packet, port, host)
-  })
+	const motd = parts[1]
+	const mapName = parts[7]
+
+	return {
+		edition: parts[0],
+		gamemode: parts[8],
+		geyserDetected: detectGeyserFromMotd(motd, mapName),
+		mapName,
+		maxPlayers: parseNumber(parts[5]) ?? 0,
+		motd,
+		online: true,
+		playerCount: parseNumber(parts[4]) ?? 0,
+		port: parseNumber(parts[10]),
+		protocolVersion: parseNumber(parts[2]),
+		serverId: parts[6],
+		version: parts[3],
+	}
+}
+
+export async function pingBedrockServer(
+	host: string,
+	port = 19_132,
+	timeout = 5000,
+): Promise<BedrockServerInfo> {
+	const target = await resolvePublicTarget(host)
+
+	return await new Promise((resolve) => {
+		const socket = dgram.createSocket(target.family === 6 ? 'udp6' : 'udp4')
+		const timestamp = BigInt(Date.now())
+		let finished = false
+
+		const finish = (result: BedrockServerInfo) => {
+			if (finished) {
+				return
+			}
+			finished = true
+			clearTimeout(timer)
+			socket.close()
+			resolve(result)
+		}
+
+		const timer = setTimeout(() => finish({ online: false }), timeout)
+
+		socket.on('error', () => finish({ online: false }))
+		socket.on('message', (message, remote) => {
+			if (
+				remote.port !== port ||
+				!addressesMatch(remote.address, target.address)
+			) {
+				return
+			}
+
+			const result = parseBedrockPong(message, timestamp)
+			if (result) {
+				finish({ ...result, port: result.port ?? port })
+			}
+		})
+
+		const packet = Buffer.alloc(33)
+		packet[0] = 0x01
+		packet.writeBigInt64BE(timestamp, 1)
+		RAKNET_MAGIC.copy(packet, 9)
+		randomBytes(8).copy(packet, 25)
+
+		socket.send(packet, port, target.address, (error) => {
+			if (error) {
+				finish({ online: false })
+			}
+		})
+	})
 }
