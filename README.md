@@ -49,7 +49,7 @@ Query parameters:
 
 - `ip` required: public server hostname or IP address
 - `port` optional: `1-65535`, default `19132`
-- `timeout` optional: `1000-8000` milliseconds, default `5000`
+- `timeout` optional: `1000-8000` milliseconds, default `8000`
 
 ```json
 {

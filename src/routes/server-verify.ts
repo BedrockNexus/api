@@ -11,6 +11,7 @@ import { inspectServerSoftware } from '../lib/server-software'
 import { requireApiKey } from '../middleware/api-key'
 
 const VERIFICATION_PREFIX = 'bedrocknexus-verify='
+const VERIFICATION_BEDROCK_TIMEOUT_MS = 8000
 
 type VerificationMethod = 'dns_txt' | 'motd_token'
 
@@ -89,7 +90,11 @@ async function verifyDnsRecord(
 		}
 	}
 
-	const server = await pingBedrockServer(host, port, 5000)
+	const server = await pingBedrockServer(
+		host,
+		port,
+		VERIFICATION_BEDROCK_TIMEOUT_MS,
+	)
 	if (!server.online) {
 		return {
 			error:
@@ -110,7 +115,11 @@ async function verifyMotd(
 	port: number,
 	code: string,
 ): Promise<VerificationResult> {
-	const server = await pingBedrockServer(host, port, 5000)
+	const server = await pingBedrockServer(
+		host,
+		port,
+		VERIFICATION_BEDROCK_TIMEOUT_MS,
+	)
 	if (!server.online) {
 		return {
 			error: 'The Bedrock server is offline or unreachable',

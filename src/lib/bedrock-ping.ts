@@ -8,6 +8,7 @@ const RAKNET_MAGIC = Buffer.from([
 	0x34, 0x56, 0x78,
 ])
 const PONG_HEADER_LENGTH = 35
+const PING_RETRY_INTERVAL_MS = 750
 
 export interface BedrockServerInfo {
 	edition?: string
@@ -129,6 +130,7 @@ export async function pingBedrockServer(
 			}
 			finished = true
 			clearTimeout(timer)
+			clearInterval(retryTimer)
 			socket.close()
 			resolve(result)
 		}
@@ -150,16 +152,20 @@ export async function pingBedrockServer(
 			}
 		})
 
-		const packet = Buffer.alloc(33)
-		packet[0] = 0x01
-		packet.writeBigInt64BE(timestamp, 1)
-		RAKNET_MAGIC.copy(packet, 9)
-		randomBytes(8).copy(packet, 25)
+		const sendPing = () => {
+			const packet = Buffer.alloc(33)
+			packet[0] = 0x01
+			packet.writeBigInt64BE(timestamp, 1)
+			RAKNET_MAGIC.copy(packet, 9)
+			randomBytes(8).copy(packet, 25)
 
-		socket.send(packet, port, target.address, (error) => {
-			if (error) {
-				finish({ online: false })
-			}
-		})
+			socket.send(packet, port, target.address, (error) => {
+				if (error) {
+					finish({ online: false })
+				}
+			})
+		}
+		const retryTimer = setInterval(sendPing, PING_RETRY_INTERVAL_MS)
+		sendPing()
 	})
 }

@@ -8,7 +8,7 @@ export function parsePort(value: string | undefined, fallback = 19_132) {
 	return port
 }
 
-export function parseTimeout(value: string | undefined, fallback = 5000) {
+export function parseTimeout(value: string | undefined, fallback = 8000) {
 	const timeout = Number.parseInt(value ?? String(fallback), 10)
 	if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 8000) {
 		throw new RequestValidationError(
