@@ -182,7 +182,8 @@ export async function queryJavaServer(
 			socket.write(Buffer.from([0x01, 0x00]))
 		})
 		socket.on('data', (chunk) => {
-			buffer = Buffer.concat([buffer, chunk])
+			const chunkBuffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+			buffer = Buffer.concat([buffer, chunkBuffer])
 			if (buffer.length > MAX_STATUS_RESPONSE_BYTES) {
 				finish(null)
 				return
