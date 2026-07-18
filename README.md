@@ -186,3 +186,13 @@ The result is `native_bedrock`, `geyser_likely`, or `ambiguous`. Automatic owner
 | `ARTIFACT_ALLOWED_HOSTS` | Exact comma-separated R2 hosts accepted by the validator worker | none |
 
 Rate limits use an in-memory store per API instance. Use a shared store before horizontally scaling the API.
+
+## Contributing And Security
+
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request. Report
+security vulnerabilities privately by following [SECURITY.md](./SECURITY.md),
+not through a public issue.
+
+## License
+
+BedrockNexus API is available under the [MIT License](./LICENSE).

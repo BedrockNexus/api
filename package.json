@@ -3,6 +3,16 @@
   "version": "1.0.0",
   "description": "BedrockNexus API - Lightweight Hono backend",
   "license": "MIT",
+  "private": true,
+  "homepage": "https://github.com/BedrockNexus/api#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BedrockNexus/api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BedrockNexus/api/issues"
+  },
+  "packageManager": "bun@1.3.6",
   "type": "module",
   "scripts": {
 		"dev": "bun run --watch src/index.ts",
