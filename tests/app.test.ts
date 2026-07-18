@@ -5,6 +5,7 @@ import type { AppConfig } from '../src/config'
 function createTestConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 	return {
 		apiKey: 'test-secret',
+		artifactAllowedHosts: ['storage.example.test'],
 		corsOrigins: ['https://bedrocknexus.test'],
 		generalRateLimit: 10,
 		maxConcurrentStatusChecks: 2,

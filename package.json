@@ -5,14 +5,17 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
+		"dev": "bun run --watch src/index.ts",
+		"dev:worker": "bun run --watch src/worker.ts",
     "lint": "bun node_modules/@biomejs/biome/bin/biome check src tests",
     "lint:fix": "bun node_modules/@biomejs/biome/bin/biome check --write src tests",
-    "start": "bun run src/index.ts",
+		"start": "bun run src/index.ts",
+		"start:worker": "bun run src/worker.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@zip.js/zip.js": "^2.8.31",
     "hono": "^4.12.25",
     "hono-rate-limiter": "^0.4.2",
     "ipaddr.js": "^2.4.0"

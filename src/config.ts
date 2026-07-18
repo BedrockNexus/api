@@ -1,5 +1,6 @@
 export interface AppConfig {
 	apiKey?: string
+	artifactAllowedHosts: string[]
 	corsOrigins: '*' | string[]
 	generalRateLimit: number
 	maxConcurrentStatusChecks: number
@@ -42,6 +43,10 @@ export function loadAppConfig(): AppConfig {
 
 	return {
 		apiKey,
+		artifactAllowedHosts:
+			process.env.ARTIFACT_ALLOWED_HOSTS?.split(',')
+				.map((host) => host.trim().toLowerCase())
+				.filter(Boolean) ?? [],
 		corsOrigins: readCorsOrigins(),
 		generalRateLimit: readPositiveInteger('GENERAL_RATE_LIMIT', 60),
 		maxConcurrentStatusChecks: readPositiveInteger(

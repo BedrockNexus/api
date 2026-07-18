@@ -1,6 +1,8 @@
 # BedrockNexus API
 
-A small Bun and Hono service for public Minecraft Bedrock status checks and internal server ownership verification.
+A small Bun and Hono service for public Minecraft Bedrock status checks,
+internal server ownership verification, and isolated project artifact
+validation.
 
 ## Features
 
@@ -11,6 +13,7 @@ A small Bun and Hono service for public Minecraft Bedrock status checks and inte
 - API-key protection for internal verification routes
 - Conservative detection of default or explicitly branded Geyser responses
 - Java status and SRV correlation for customized Geyser proxies
+- Private validation of Bedrock packs, worlds, skins, and Blockbench models
 
 ## Setup
 
@@ -18,6 +21,7 @@ A small Bun and Hono service for public Minecraft Bedrock status checks and inte
 bun install
 cp .env.example .env
 bun run dev
+bun run dev:worker
 ```
 
 The API and Convex deployment must share the same secret:
@@ -37,6 +41,7 @@ bun run lint
 bun run typecheck
 bun run test
 bun run dev
+bun run dev:worker
 ```
 
 ## Public Endpoint
@@ -58,6 +63,7 @@ Query parameters:
   "motd": "Welcome to My Server",
   "version": "1.21.80",
   "gamemode": "Survival",
+  "latencyMs": 42,
   "software": {
     "classification": "native_bedrock",
     "javaEndpoints": [],
@@ -120,6 +126,36 @@ DNS verification requires an exact TXT value matching the token. MOTD verificati
 { "verified": true }
 ```
 
+### `POST /artifact-validate`
+
+This endpoint is exposed only by the validator worker and requires the API
+key. It accepts a short-lived R2 URL plus the expected project type, file name,
+and file size. The response contains either a sanitized validation report or a
+stable rejection code.
+
+The worker rejects non-HTTPS and non-allowlisted download hosts, archive path
+traversal, duplicate or encrypted entries, unsafe expansion ratios, malformed
+pack manifests, invalid Bedrock worlds, non-64x64 or animated skins, and
+Blockbench models with external textures.
+
+## Validator Deployment
+
+Deploy the same image as a second service and override its command:
+
+```bash
+bun run start:worker
+```
+
+Set `PORT` to the service port, use the same `API_SECRET_KEY` as Convex, and set
+`ARTIFACT_ALLOWED_HOSTS` to the exact hostname used by your R2 signed URLs, for
+example:
+
+```text
+your-bucket-id.r2.cloudflarestorage.com
+```
+
+Do not expose the validator endpoint through the public status API service.
+
 ## Geyser Detection
 
 [Geyser intentionally builds a normal Bedrock pong](https://github.com/GeyserMC/Geyser/blob/master/core/src/main/java/org/geysermc/geyser/network/netty/GeyserServer.java) and can replace or pass through both MOTD lines. The ping protocol exposes no mandatory Geyser software identifier.
@@ -147,5 +183,6 @@ The result is `native_bedrock`, `geyser_likely`, or `ambiguous`. Automatic owner
 | `GENERAL_RATE_LIMIT` | General requests per minute per key | `60` |
 | `STATUS_RATE_LIMIT` | Status requests per minute per key | `30` |
 | `MAX_CONCURRENT_STATUS_CHECKS` | Simultaneous UDP checks per instance | `25` |
+| `ARTIFACT_ALLOWED_HOSTS` | Exact comma-separated R2 hosts accepted by the validator worker | none |
 
 Rate limits use an in-memory store per API instance. Use a shared store before horizontally scaling the API.
