@@ -13,7 +13,7 @@ validation.
 - API-key protection for internal verification routes
 - Conservative detection of default or explicitly branded Geyser responses
 - Java status and SRV correlation for customized Geyser proxies
-- Private validation of Bedrock packs, worlds, skins, and Blockbench models
+- Private validation of Bedrock packs, worlds, and skins
 
 ## Setup
 
@@ -135,8 +135,7 @@ stable rejection code.
 
 The worker rejects non-HTTPS and non-allowlisted download hosts, archive path
 traversal, duplicate or encrypted entries, unsafe expansion ratios, malformed
-pack manifests, invalid Bedrock worlds, non-64x64 or animated skins, and
-Blockbench models with external textures.
+pack manifests, invalid Bedrock worlds, and non-64x64 or animated skins.
 
 ## Validator Deployment
 

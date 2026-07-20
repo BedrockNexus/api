@@ -3,7 +3,6 @@ import type { AppConfig } from '../src/config'
 import {
 	ArtifactValidationError,
 	assertAllowedArtifactUrl,
-	validateModelText,
 	validateSkinBytes,
 } from '../src/lib/artifact-validator'
 import { createWorkerApp } from '../src/worker-app'
@@ -90,27 +89,6 @@ describe('artifact validator', () => {
 		expect(() => validateSkinBytes(createSkinPng().slice(0, -12))).toThrow(
 			'Skin PNG is incomplete',
 		)
-	})
-
-	test('requires Blockbench textures to be embedded', () => {
-		expect(
-			validateModelText(
-				JSON.stringify({
-					elements: [{}],
-					meta: { model_format: 'bedrock' },
-					textures: [{ source: 'data:image/png;base64,AA==' }],
-				}),
-			),
-		).toEqual({
-			elementCount: 1,
-			modelFormat: 'bedrock',
-			textureCount: 1,
-		})
-		expect(() =>
-			validateModelText(
-				JSON.stringify({ textures: [{ source: 'https://example.com/a.png' }] }),
-			),
-		).toThrow('Model textures must be embedded')
 	})
 
 	test('keeps worker validation private and validates request shapes', async () => {

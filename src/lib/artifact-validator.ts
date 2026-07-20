@@ -5,13 +5,7 @@ import {
 	ZipReader,
 } from '@zip.js/zip.js'
 
-export const ARTIFACT_TYPES = [
-	'addon',
-	'map',
-	'skin',
-	'model',
-	'resource_pack',
-] as const
+export const ARTIFACT_TYPES = ['addon', 'map', 'skin', 'resource_pack'] as const
 
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number]
 
@@ -23,9 +17,6 @@ export interface ArtifactValidationReport {
 	manifestCount?: number
 	width?: number
 	height?: number
-	modelFormat?: string
-	elementCount?: number
-	textureCount?: number
 }
 
 export type ArtifactValidationResult =
@@ -43,7 +34,6 @@ const MAX_ARCHIVE_ENTRIES = 10_000
 const MAX_MANIFEST_SIZE = 1024 * 1024
 const MAX_TOTAL_UNCOMPRESSED_SIZE = 4 * 1024 * 1024 * 1024
 const MAX_EXPANSION_RATIO = 200
-const MAX_MODEL_SIZE = 25 * 1024 * 1024
 const MAX_SKIN_SIZE = 2 * 1024 * 1024
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
 const UNSAFE_ARCHIVE_PATH = /(^|\/)\.\.(\/|$)|^\/|^[a-z]:|\\/i
@@ -70,7 +60,6 @@ function expectedExtension(type: ArtifactType) {
 		addon: 'mcaddon',
 		map: 'mcworld',
 		skin: 'png',
-		model: 'bbmodel',
 		resource_pack: 'mcpack',
 	}[type]
 }
@@ -382,47 +371,6 @@ export function validateSkinBytes(bytes: Uint8Array) {
 	return { width, height }
 }
 
-export function validateModelText(text: string) {
-	let model: Record<string, unknown>
-	try {
-		model = JSON.parse(text) as Record<string, unknown>
-	} catch {
-		throw new ArtifactValidationError(
-			'Model contains invalid JSON',
-			'INVALID_MODEL_JSON',
-		)
-	}
-	const meta =
-		model.meta && typeof model.meta === 'object'
-			? (model.meta as Record<string, unknown>)
-			: {}
-	const elements = Array.isArray(model.elements) ? model.elements : []
-	const textures = Array.isArray(model.textures) ? model.textures : []
-	for (const texture of textures) {
-		if (!texture || typeof texture !== 'object') continue
-		const source = (texture as Record<string, unknown>).source
-		if (
-			typeof source !== 'string' ||
-			!/^data:image\/(png|jpeg);base64,/i.test(source)
-		) {
-			throw new ArtifactValidationError(
-				'Model textures must be embedded PNG or JPEG data',
-				'EXTERNAL_MODEL_TEXTURE',
-			)
-		}
-	}
-	return {
-		modelFormat:
-			typeof meta.model_format === 'string'
-				? meta.model_format
-				: typeof meta.format_version === 'string'
-					? meta.format_version
-					: undefined,
-		elementCount: elements.length,
-		textureCount: textures.length,
-	}
-}
-
 export async function validateArtifact(
 	request: ArtifactValidationRequest,
 	allowedHosts: readonly string[],
@@ -448,9 +396,6 @@ export async function validateArtifact(
 					await fetchBounded(request.downloadUrl, MAX_SKIN_SIZE),
 				),
 			)
-		} else if (request.type === 'model') {
-			const bytes = await fetchBounded(request.downloadUrl, MAX_MODEL_SIZE)
-			Object.assign(report, validateModelText(new TextDecoder().decode(bytes)))
 		} else {
 			Object.assign(report, await validateArchive(request))
 		}
