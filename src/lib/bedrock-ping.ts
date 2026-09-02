@@ -65,12 +65,13 @@ function addressesMatch(left: string, right: string) {
 
 export function parseBedrockPong(
 	message: Buffer,
-	expectedTimestamp: bigint,
+	expectedTimestamp?: bigint,
 ): BedrockServerInfo | null {
 	if (
 		message.length < PONG_HEADER_LENGTH ||
 		message[0] !== 0x1c ||
-		message.readBigInt64BE(1) !== expectedTimestamp ||
+		(expectedTimestamp !== undefined &&
+			message.readBigInt64BE(1) !== expectedTimestamp) ||
 		!message.subarray(17, 33).equals(RAKNET_MAGIC)
 	) {
 		return null
@@ -146,7 +147,10 @@ export async function pingBedrockServer(
 				return
 			}
 
-			const result = parseBedrockPong(message, timestamp)
+			// Some Bedrock proxies replace the ping timestamp instead of echoing it.
+			// The source endpoint, packet type, RakNet magic, and MCPE payload still
+			// provide the validation needed for a status response.
+			const result = parseBedrockPong(message)
 			if (result) {
 				finish({ ...result, port: result.port ?? port })
 			}

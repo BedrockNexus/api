@@ -63,6 +63,12 @@ describe('Bedrock pong parsing', () => {
 		expect(parseBedrockPong(packet, timestamp)).toBeNull()
 	})
 
+	test('accepts proxy pongs that replace the ping timestamp', () => {
+		const packet = createPong('MCPE;Proxy;1;1.0;2;100', 456n)
+
+		expect(parseBedrockPong(packet)?.online).toBe(true)
+	})
+
 	test('rejects non-Bedrock edition responses', () => {
 		const timestamp = 123n
 		const packet = createPong('MINECRAFT;Test;1;1.0;0;10', timestamp)
