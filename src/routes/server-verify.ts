@@ -51,10 +51,6 @@ async function rejectUnsupportedSoftware(
 	}
 }
 
-export function generateVerificationCode() {
-	return crypto.randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase()
-}
-
 async function verifyDnsRecord(
 	host: string,
 	port: number,
@@ -180,8 +176,6 @@ export function createServerVerificationRoutes(apiKey: string | undefined) {
 				c.json({ error: 'Verification request is too large' }, 413),
 		}),
 	)
-
-	app.post('/code', (c) => c.json({ code: generateVerificationCode() }))
 
 	app.post('/check', async (c) => {
 		let body: VerificationRequest

@@ -23,25 +23,27 @@ describe('API routes', () => {
 		expect(await response.json()).toEqual({ status: 'healthy' })
 	})
 
-	test('requires an API key for verification codes', async () => {
-		const app = createApp(createTestConfig())
+	test('requires an API key for ownership checks', async () => {
+		const response = await createApp(createTestConfig()).request(
+			'/server-verify/check',
+			{ method: 'POST' },
+		)
 
-		const unauthorized = await app.request('/server-verify/code', {
-			method: 'POST',
-		})
-		expect(unauthorized.status).toBe(401)
+		expect(response.status).toBe(401)
+	})
 
-		const authorized = await app.request('/server-verify/code', {
-			headers: { 'X-API-Key': 'test-secret' },
-			method: 'POST',
-		})
-		expect(authorized.status).toBe(200)
-		expect((await authorized.json()).code).toMatch(/^[A-F0-9]{8}$/)
+	test('no longer issues verification codes', async () => {
+		const response = await createApp(createTestConfig()).request(
+			'/server-verify/code',
+			{ headers: { 'X-API-Key': 'test-secret' }, method: 'POST' },
+		)
+
+		expect(response.status).toBe(404)
 	})
 
 	test('fails closed when API authentication is not configured', async () => {
 		const app = createApp(createTestConfig({ apiKey: undefined }))
-		const response = await app.request('/server-verify/code', {
+		const response = await app.request('/server-verify/check', {
 			method: 'POST',
 		})
 

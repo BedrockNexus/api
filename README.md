@@ -82,15 +82,10 @@ Internal endpoints require:
 X-API-Key: your-secret-key
 ```
 
-### `POST /server-verify/code`
-
-Generate an ownership verification code.
-
-```json
-{ "code": "A1B2C3D4" }
-```
-
-The token placed in DNS or the MOTD is:
+Verification codes are issued and stored by the Hub's Convex backend, bound
+to the requesting account, so a token copied from another server cannot be
+replayed. This service only checks whether a code is present. The token placed
+in DNS or the MOTD is:
 
 ```text
 bedrocknexus-verify=A1B2C3D4
@@ -136,6 +131,11 @@ stable rejection code.
 The worker rejects non-HTTPS and non-allowlisted download hosts, archive path
 traversal, duplicate or encrypted entries, unsafe expansion ratios, malformed
 pack manifests, invalid Bedrock worlds, and non-64x64 or animated skins.
+
+## Deployment
+
+Coolify builds and deploys the API from source with Railpack on pushes to
+`main`. `Quality` runs lint, typecheck and tests on pull requests and `main`.
 
 ## Validator Deployment
 
