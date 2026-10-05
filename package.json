@@ -15,25 +15,25 @@
   "packageManager": "bun@1.3.6",
   "type": "module",
   "scripts": {
-		"dev": "bun run --watch src/index.ts",
-		"dev:worker": "bun run --watch src/worker.ts",
+    "dev": "bun run --watch src/index.ts",
+    "dev:worker": "bun run --watch src/worker.ts",
     "lint": "bun node_modules/@biomejs/biome/bin/biome check src tests",
     "lint:fix": "bun node_modules/@biomejs/biome/bin/biome check --write src tests",
-		"start": "bun run src/index.ts",
-		"start:worker": "bun run src/worker.ts",
+    "start": "bun run src/index.ts",
+    "start:worker": "bun run src/worker.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@zip.js/zip.js": "^2.8.31",
-    "hono": "^4.12.30",
-    "hono-rate-limiter": "^0.5.3",
-    "ipaddr.js": "^2.4.0"
+    "@zip.js/zip.js": "^2.23.0",
+    "hono": "^4.13.13",
+    "hono-rate-limiter": "^0.5.4",
+    "ipaddr.js": "^2.5.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.4",
-    "@types/bun": "^1.3.14",
-    "@types/node": "^26.1.1",
+    "@biomejs/biome": "^2.5.15",
+    "@types/bun": "^1.4.2",
+    "@types/node": "^26.6.4",
     "typescript": "^7.0.2"
   }
 }
