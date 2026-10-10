@@ -5,7 +5,7 @@ import {
 	ZipReader,
 } from '@zip.js/zip.js'
 
-export const ARTIFACT_TYPES = ['addon', 'map', 'skin', 'resource_pack'] as const
+export const ARTIFACT_TYPES = ['addon', 'resource_pack'] as const
 
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number]
 
@@ -15,8 +15,6 @@ export interface ArtifactValidationReport {
 	entryCount?: number
 	totalUncompressedSize?: number
 	manifestCount?: number
-	width?: number
-	height?: number
 }
 
 export type ArtifactValidationResult =
@@ -34,8 +32,6 @@ const MAX_ARCHIVE_ENTRIES = 10_000
 const MAX_MANIFEST_SIZE = 1024 * 1024
 const MAX_TOTAL_UNCOMPRESSED_SIZE = 4 * 1024 * 1024 * 1024
 const MAX_EXPANSION_RATIO = 200
-const MAX_SKIN_SIZE = 2 * 1024 * 1024
-const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
 const UNSAFE_ARCHIVE_PATH = /(^|\/)\.\.(\/|$)|^\/|^[a-z]:|\\/i
 
 function hasControlCharacter(value: string) {
@@ -58,8 +54,6 @@ function extensionOf(fileName: string) {
 function expectedExtension(type: ArtifactType) {
 	return {
 		addon: 'mcaddon',
-		map: 'mcworld',
-		skin: 'png',
 		resource_pack: 'mcpack',
 	}[type]
 }
@@ -191,10 +185,7 @@ function getModuleTypes(manifest: Record<string, unknown>) {
 	})
 }
 
-async function validatePackArchive(
-	type: 'addon' | 'resource_pack',
-	entries: Entry[],
-) {
+async function validatePackArchive(type: ArtifactType, entries: Entry[]) {
 	const manifests = getManifestEntries(entries)
 	if (manifests.length === 0) {
 		throw new ArtifactValidationError(
@@ -235,26 +226,6 @@ async function validatePackArchive(
 	return manifests.length
 }
 
-function validateWorldArchive(entries: Entry[]) {
-	const fileNames = entries
-		.filter((entry) => !entry.directory)
-		.map((entry) => entry.filename.replace(/^\.\//, '').toLowerCase())
-	const levelPath = fileNames.find((name) => name.endsWith('level.dat'))
-	if (!levelPath) {
-		throw new ArtifactValidationError(
-			'World archive does not contain level.dat',
-			'MISSING_LEVEL_DAT',
-		)
-	}
-	const prefix = levelPath.slice(0, -'level.dat'.length)
-	if (!fileNames.some((name) => name.startsWith(`${prefix}db/`))) {
-		throw new ArtifactValidationError(
-			'World archive does not contain a Bedrock world database',
-			'MISSING_WORLD_DATABASE',
-		)
-	}
-}
-
 async function validateArchive(request: ArtifactValidationRequest) {
 	const reader = new ZipReader(new HttpRangeReader(request.downloadUrl), {
 		strictness: 'strict',
@@ -262,12 +233,7 @@ async function validateArchive(request: ArtifactValidationRequest) {
 	try {
 		const entries = await reader.getEntries()
 		const { totalUncompressedSize } = validateEntryMetadata(entries)
-		let manifestCount: number | undefined
-		if (request.type === 'map') {
-			validateWorldArchive(entries)
-		} else if (request.type === 'addon' || request.type === 'resource_pack') {
-			manifestCount = await validatePackArchive(request.type, entries)
-		}
+		const manifestCount = await validatePackArchive(request.type, entries)
 		return {
 			entryCount: entries.length,
 			totalUncompressedSize,
@@ -282,93 +248,6 @@ async function validateArchive(request: ArtifactValidationRequest) {
 	} finally {
 		await reader.close().catch(() => undefined)
 	}
-}
-
-async function fetchBounded(url: string, maxSize: number) {
-	const response = await fetch(url, { signal: AbortSignal.timeout(60_000) })
-	if (!response.ok) {
-		throw new ArtifactValidationError(
-			'Artifact could not be read from storage',
-			'ARTIFACT_UNAVAILABLE',
-		)
-	}
-	const contentLength = Number(response.headers.get('content-length'))
-	if (contentLength > maxSize) {
-		throw new ArtifactValidationError('Artifact is too large', 'FILE_TOO_LARGE')
-	}
-	const bytes = new Uint8Array(await response.arrayBuffer())
-	if (bytes.length === 0 || bytes.length > maxSize) {
-		throw new ArtifactValidationError('Artifact is too large', 'FILE_TOO_LARGE')
-	}
-	return bytes
-}
-
-export function validateSkinBytes(bytes: Uint8Array) {
-	if (
-		bytes.length < 33 ||
-		!PNG_SIGNATURE.every((value, index) => bytes[index] === value)
-	) {
-		throw new ArtifactValidationError('Skin is not a valid PNG', 'INVALID_PNG')
-	}
-	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-	if (view.getUint32(8) !== 13) {
-		throw new ArtifactValidationError(
-			'Skin PNG has an invalid header',
-			'INVALID_PNG',
-		)
-	}
-	const headerType = String.fromCharCode(
-		bytes[12],
-		bytes[13],
-		bytes[14],
-		bytes[15],
-	)
-	if (headerType !== 'IHDR') {
-		throw new ArtifactValidationError(
-			'Skin PNG has an invalid header',
-			'INVALID_PNG',
-		)
-	}
-	const width = view.getUint32(16)
-	const height = view.getUint32(20)
-	if (width !== 64 || height !== 64) {
-		throw new ArtifactValidationError(
-			'Skins must be exactly 64x64 pixels',
-			'INVALID_SKIN_DIMENSIONS',
-		)
-	}
-	let hasImageData = false
-	let hasEnd = false
-	for (let offset = 8; offset + 12 <= bytes.length; ) {
-		const length = view.getUint32(offset)
-		if (offset + 12 + length > bytes.length) {
-			throw new ArtifactValidationError('Skin PNG is truncated', 'INVALID_PNG')
-		}
-		const chunkType = String.fromCharCode(
-			bytes[offset + 4],
-			bytes[offset + 5],
-			bytes[offset + 6],
-			bytes[offset + 7],
-		)
-		if (chunkType === 'acTL') {
-			throw new ArtifactValidationError(
-				'Animated PNG skins are not supported',
-				'ANIMATED_SKIN',
-			)
-		}
-		if (chunkType === 'IDAT') {
-			hasImageData = true
-		}
-		if (chunkType === 'IEND') {
-			hasEnd = length === 0 && offset + 12 === bytes.length
-			break
-		}
-		offset += length + 12
-	}
-	if (!(hasImageData && hasEnd)) {
-		throw new ArtifactValidationError('Skin PNG is incomplete', 'INVALID_PNG')
-	}
-	return { width, height }
 }
 
 export async function validateArtifact(
@@ -388,16 +267,7 @@ export async function validateArtifact(
 		const report: ArtifactValidationReport = {
 			type: request.type,
 			fileSize: request.fileSize,
-		}
-		if (request.type === 'skin') {
-			Object.assign(
-				report,
-				validateSkinBytes(
-					await fetchBounded(request.downloadUrl, MAX_SKIN_SIZE),
-				),
-			)
-		} else {
-			Object.assign(report, await validateArchive(request))
+			...(await validateArchive(request)),
 		}
 		return { valid: true, report }
 	} catch (error) {

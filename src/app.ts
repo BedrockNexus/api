@@ -66,9 +66,14 @@ export function createApp(config: AppConfig = loadAppConfig()) {
 		}),
 	)
 	app.use('/minecraft/status', statusLimiter)
+	// Scheduled checks from the Hub arrive in bursts; they wait for a slot so a
+	// busy moment is never reported back as a failed check.
 	app.use(
 		'/minecraft/status',
-		concurrencyLimit(config.maxConcurrentStatusChecks),
+		concurrencyLimit(config.maxConcurrentStatusChecks, {
+			maxQueued: config.maxQueuedStatusChecks,
+			shouldQueue: internalRequest,
+		}),
 	)
 	app.use('*', generalLimiter)
 

@@ -9,6 +9,7 @@ function createTestConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 		corsOrigins: ['https://bedrocknexus.test'],
 		generalRateLimit: 10,
 		maxConcurrentStatusChecks: 2,
+		maxQueuedStatusChecks: 2,
 		statusRateLimit: 2,
 		trustProxyHeaders: false,
 		...overrides,

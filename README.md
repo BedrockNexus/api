@@ -13,7 +13,7 @@ validation.
 - API-key protection for internal verification routes
 - Conservative detection of default or explicitly branded Geyser responses
 - Java status and SRV correlation for customized Geyser proxies
-- Private validation of Bedrock packs, worlds, and skins
+- Private validation of Bedrock add-ons and resource packs
 
 ## Setup
 
@@ -130,7 +130,7 @@ stable rejection code.
 
 The worker rejects non-HTTPS and non-allowlisted download hosts, archive path
 traversal, duplicate or encrypted entries, unsafe expansion ratios, malformed
-pack manifests, invalid Bedrock worlds, and non-64x64 or animated skins.
+pack manifests, and add-ons or resource packs without a matching module.
 
 ## Deployment
 
@@ -182,6 +182,7 @@ The result is `native_bedrock`, `geyser_likely`, or `ambiguous`. Automatic owner
 | `GENERAL_RATE_LIMIT` | General requests per minute per key | `60` |
 | `STATUS_RATE_LIMIT` | Status requests per minute per key | `30` |
 | `MAX_CONCURRENT_STATUS_CHECKS` | Simultaneous UDP checks per instance | `25` |
+| `MAX_QUEUED_STATUS_CHECKS` | Status requests with the API key that may wait for a free slot; public requests are rejected instead | `1000` |
 | `ARTIFACT_ALLOWED_HOSTS` | Exact comma-separated R2 hosts accepted by the validator worker | none |
 
 Rate limits use an in-memory store per API instance. Use a shared store before horizontally scaling the API.

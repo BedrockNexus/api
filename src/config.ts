@@ -4,6 +4,7 @@ export interface AppConfig {
 	corsOrigins: '*' | string[]
 	generalRateLimit: number
 	maxConcurrentStatusChecks: number
+	maxQueuedStatusChecks: number
 	statusRateLimit: number
 	trustProxyHeaders: boolean
 }
@@ -52,6 +53,10 @@ export function loadAppConfig(): AppConfig {
 		maxConcurrentStatusChecks: readPositiveInteger(
 			'MAX_CONCURRENT_STATUS_CHECKS',
 			25,
+		),
+		maxQueuedStatusChecks: readPositiveInteger(
+			'MAX_QUEUED_STATUS_CHECKS',
+			1000,
 		),
 		statusRateLimit: readPositiveInteger('STATUS_RATE_LIMIT', 30),
 		trustProxyHeaders: readBoolean('TRUST_PROXY_HEADERS', false),
