@@ -132,6 +132,23 @@ The worker rejects non-HTTPS and non-allowlisted download hosts, archive path
 traversal, duplicate or encrypted entries, unsafe expansion ratios, malformed
 pack manifests, and add-ons or resource packs without a matching module.
 
+Addon uploads support unpacked pack directories and `.mcaddon` bundles
+containing `.mcpack` files. Every bundled pack must have its own valid manifest
+and supported module. A valid outer manifest does not bypass validation of
+embedded packs. Resource-pack uploads still require their own resources module.
+
+Validation permits one embedded pack layer, at most 64 embedded packs, and at
+most 256 MB per embedded pack. Packs are processed sequentially through bounded
+temporary files, which are removed after validation. The 10,000-entry, 4 GB
+expanded-size and 200:1 expansion limits apply across the complete bundle;
+each individual archive must also satisfy the expansion limit. Report counts
+include embedded entries, and expanded-size totals include the container bytes
+processed to inspect them. Manifest reads are capped at 1 MB and extracted
+pack/manifest checksums are verified.
+
+Temporary storage failures return HTTP 503 with `VALIDATOR_UNAVAILABLE` so
+Convex retries validation instead of deleting an artifact as malformed.
+
 ## Deployment
 
 Coolify builds and deploys the API from source with Railpack on pushes to

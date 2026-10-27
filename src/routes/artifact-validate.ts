@@ -44,17 +44,19 @@ export function createArtifactValidationRoutes(args: {
 			return c.json({ error: 'Invalid validation request' }, 400)
 		}
 
-		return c.json(
-			await validateArtifact(
-				{
-					type: body.type as ArtifactType,
-					fileName: body.fileName,
-					fileSize: body.fileSize,
-					downloadUrl: body.downloadUrl,
-				},
-				args.allowedHosts,
-			),
+		const result = await validateArtifact(
+			{
+				type: body.type as ArtifactType,
+				fileName: body.fileName,
+				fileSize: body.fileSize,
+				downloadUrl: body.downloadUrl,
+			},
+			args.allowedHosts,
 		)
+		if (!result.valid && result.code === 'VALIDATOR_UNAVAILABLE') {
+			return c.json(result, 503)
+		}
+		return c.json(result)
 	})
 	return app
 }

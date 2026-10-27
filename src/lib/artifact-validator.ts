@@ -1,7 +1,10 @@
+import { mkdtemp, open, rm, rmdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
+	BlobReader,
 	type Entry,
 	HttpRangeReader,
-	TextWriter,
 	ZipReader,
 } from '@zip.js/zip.js'
 
@@ -32,7 +35,25 @@ const MAX_ARCHIVE_ENTRIES = 10_000
 const MAX_MANIFEST_SIZE = 1024 * 1024
 const MAX_TOTAL_UNCOMPRESSED_SIZE = 4 * 1024 * 1024 * 1024
 const MAX_EXPANSION_RATIO = 200
+const MAX_EMBEDDED_PACK_SIZE = 256 * 1024 * 1024
+const MAX_EMBEDDED_PACKS = 64
 const UNSAFE_ARCHIVE_PATH = /(^|\/)\.\.(\/|$)|^\/|^[a-z]:|\\/i
+const TEMPORARY_STORAGE_ERRORS = new Set([
+	'EACCES',
+	'EPERM',
+	'EROFS',
+	'ENOSPC',
+	'ENOENT',
+	'EMFILE',
+	'ENFILE',
+	'EIO',
+])
+
+interface ArchiveBudget {
+	entryCount: number
+	totalUncompressedSize: number
+	compressedSize: number
+}
 
 function hasControlCharacter(value: string) {
 	return [...value].some((character) => character.charCodeAt(0) < 32)
@@ -93,7 +114,7 @@ export function assertAllowedArtifactUrl(
 	return url
 }
 
-function validateEntryMetadata(entries: Entry[]) {
+function validateEntryMetadata(entries: Entry[], budget: ArchiveBudget) {
 	if (entries.length === 0 || entries.length > MAX_ARCHIVE_ENTRIES) {
 		throw new ArtifactValidationError(
 			`Archives must contain between 1 and ${MAX_ARCHIVE_ENTRIES} entries`,
@@ -129,14 +150,39 @@ function validateEntryMetadata(entries: Entry[]) {
 			)
 		}
 		if (!entry.directory) {
+			if (
+				!Number.isSafeInteger(entry.uncompressedSize) ||
+				!Number.isSafeInteger(entry.compressedSize) ||
+				entry.uncompressedSize < 0 ||
+				entry.compressedSize < 0
+			) {
+				throw new ArtifactValidationError(
+					'Archive contains invalid entry sizes',
+					'INVALID_ARCHIVE',
+				)
+			}
 			totalUncompressedSize += entry.uncompressedSize
 			totalCompressedSize += Math.max(entry.compressedSize, 1)
 		}
+	}
+	// Every layer shares the outer ZIP's compressed-data baseline. Container
+	// bytes also count as expanded work, so nesting cannot reset the budget.
+	if (budget.entryCount === 0) budget.compressedSize = totalCompressedSize
+	budget.entryCount += entries.length
+	budget.totalUncompressedSize += totalUncompressedSize
+	if (budget.entryCount > MAX_ARCHIVE_ENTRIES) {
+		throw new ArtifactValidationError(
+			'Bundle contains too many archive entries',
+			'INVALID_ENTRY_COUNT',
+		)
 	}
 
 	if (
 		totalUncompressedSize > MAX_TOTAL_UNCOMPRESSED_SIZE ||
 		totalUncompressedSize / Math.max(totalCompressedSize, 1) >
+			MAX_EXPANSION_RATIO ||
+		budget.totalUncompressedSize > MAX_TOTAL_UNCOMPRESSED_SIZE ||
+		budget.totalUncompressedSize / Math.max(budget.compressedSize, 1) >
 			MAX_EXPANSION_RATIO
 	) {
 		throw new ArtifactValidationError(
@@ -144,8 +190,24 @@ function validateEntryMetadata(entries: Entry[]) {
 			'UNSAFE_EXPANSION_RATIO',
 		)
 	}
+}
 
-	return { names, totalUncompressedSize }
+async function readEntries(
+	reader: Pick<ZipReader<unknown>, 'getEntriesGenerator'>,
+	budget: ArchiveBudget,
+) {
+	const entries: Entry[] = []
+	for await (const entry of reader.getEntriesGenerator()) {
+		if (budget.entryCount + entries.length >= MAX_ARCHIVE_ENTRIES) {
+			throw new ArtifactValidationError(
+				'Bundle contains too many archive entries',
+				'INVALID_ENTRY_COUNT',
+			)
+		}
+		entries.push(entry)
+	}
+	validateEntryMetadata(entries, budget)
+	return entries
 }
 
 function getManifestEntries(entries: Entry[]) {
@@ -164,10 +226,36 @@ async function readJsonEntry(entry: Entry) {
 		)
 	}
 	try {
-		return JSON.parse(await entry.getData(new TextWriter())) as Record<
-			string,
-			unknown
-		>
+		const chunks: Uint8Array[] = []
+		let size = 0
+		await entry.getData(
+			new WritableStream<Uint8Array>({
+				write(chunk) {
+					size += chunk.byteLength
+					if (size > MAX_MANIFEST_SIZE || size > entry.uncompressedSize) {
+						throw new ArtifactValidationError(
+							'Manifest is too large',
+							'INVALID_MANIFEST',
+						)
+					}
+					chunks.push(chunk.slice())
+				},
+			}),
+			{ checkSignature: true },
+		)
+		const bytes = new Uint8Array(size)
+		let offset = 0
+		for (const chunk of chunks) {
+			bytes.set(chunk, offset)
+			offset += chunk.byteLength
+		}
+		const manifest: unknown = JSON.parse(
+			new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+		)
+		if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+			throw new Error('Manifest must be an object')
+		}
+		return manifest as Record<string, unknown>
 	} catch {
 		throw new ArtifactValidationError(
 			'Manifest contains invalid JSON',
@@ -185,18 +273,26 @@ function getModuleTypes(manifest: Record<string, unknown>) {
 	})
 }
 
-async function validatePackArchive(type: ArtifactType, entries: Entry[]) {
+async function validatePackArchive(
+	type: ArtifactType,
+	entries: Entry[],
+	allowEmpty = false,
+) {
 	const manifests = getManifestEntries(entries)
-	if (manifests.length === 0) {
+	if (manifests.length === 0 && !allowEmpty) {
 		throw new ArtifactValidationError(
 			'Pack archive does not contain a manifest.json file',
 			'MISSING_MANIFEST',
 		)
 	}
+	if (manifests.length === 0) return 0
 	const moduleTypes = new Set<string>()
 	for (const entry of manifests) {
 		const manifest = await readJsonEntry(entry)
-		if (!(manifest.header && typeof manifest.header === 'object')) {
+		if (
+			!(manifest.header && typeof manifest.header === 'object') ||
+			Array.isArray(manifest.header)
+		) {
 			throw new ArtifactValidationError(
 				'Manifest header is missing',
 				'INVALID_MANIFEST',
@@ -226,21 +322,129 @@ async function validatePackArchive(type: ArtifactType, entries: Entry[]) {
 	return manifests.length
 }
 
+async function validateEmbeddedPack(entry: Entry, budget: ArchiveBudget) {
+	if (entry.directory || entry.uncompressedSize > MAX_EMBEDDED_PACK_SIZE) {
+		throw new ArtifactValidationError(
+			'Embedded packs must not exceed 256 MB',
+			'EMBEDDED_PACK_TOO_LARGE',
+		)
+	}
+	const directory = await mkdtemp(join(tmpdir(), 'bedrocknexus-pack-'))
+	const fileName = join(directory, 'pack.mcpack')
+	try {
+		const file = await open(fileName, 'wx')
+		try {
+			let written = 0
+			await entry.getData(
+				new WritableStream<Uint8Array>({
+					async write(chunk) {
+						written += chunk.byteLength
+						if (
+							written > MAX_EMBEDDED_PACK_SIZE ||
+							written > entry.uncompressedSize
+						) {
+							throw new ArtifactValidationError(
+								'Embedded pack exceeds its declared size',
+								'EMBEDDED_PACK_TOO_LARGE',
+							)
+						}
+						let offset = 0
+						while (offset < chunk.byteLength) {
+							const result = await file.write(
+								chunk,
+								offset,
+								chunk.byteLength - offset,
+							)
+							if (!result.bytesWritten)
+								throw new Error('Could not write embedded pack')
+							offset += result.bytesWritten
+						}
+					},
+				}),
+				{ checkSignature: true },
+			)
+			if (written !== entry.uncompressedSize)
+				throw new Error('Embedded pack size mismatch')
+		} finally {
+			await file.close()
+		}
+		const reader = new ZipReader(new BlobReader(Bun.file(fileName)), {
+			strictness: 'strict',
+		})
+		try {
+			const entries = await readEntries(reader, budget)
+			if (
+				entries.some(
+					(item) =>
+						!item.directory &&
+						['mcpack', 'mcaddon'].includes(extensionOf(item.filename)),
+				)
+			) {
+				throw new ArtifactValidationError(
+					'Packs inside embedded packs are not supported',
+					'NESTED_PACK_DEPTH',
+				)
+			}
+			return await validatePackArchive('addon', entries)
+		} finally {
+			await reader.close().catch(() => undefined)
+		}
+	} finally {
+		await rm(fileName, { force: true })
+		await rmdir(directory)
+	}
+}
+
 async function validateArchive(request: ArtifactValidationRequest) {
 	const reader = new ZipReader(new HttpRangeReader(request.downloadUrl), {
 		strictness: 'strict',
 	})
 	try {
-		const entries = await reader.getEntries()
-		const { totalUncompressedSize } = validateEntryMetadata(entries)
-		const manifestCount = await validatePackArchive(request.type, entries)
+		const budget: ArchiveBudget = {
+			entryCount: 0,
+			totalUncompressedSize: 0,
+			compressedSize: 0,
+		}
+		const entries = await readEntries(reader, budget)
+		const packs = entries.filter(
+			(entry) => !entry.directory && extensionOf(entry.filename) === 'mcpack',
+		)
+		if (packs.length > 0 && request.type !== 'addon') {
+			throw new ArtifactValidationError(
+				'Only addons may bundle .mcpack archives',
+				'NESTED_PACK_DEPTH',
+			)
+		}
+		if (packs.length > MAX_EMBEDDED_PACKS) {
+			throw new ArtifactValidationError(
+				'Addons may bundle at most 64 packs',
+				'INVALID_ENTRY_COUNT',
+			)
+		}
+		let manifestCount = await validatePackArchive(
+			request.type,
+			entries,
+			packs.length > 0,
+		)
+		for (const pack of packs)
+			manifestCount += await validateEmbeddedPack(pack, budget)
 		return {
-			entryCount: entries.length,
-			totalUncompressedSize,
+			entryCount: budget.entryCount,
+			totalUncompressedSize: budget.totalUncompressedSize,
 			manifestCount,
 		}
 	} catch (error) {
 		if (error instanceof ArtifactValidationError) throw error
+		if (
+			error instanceof Error &&
+			'code' in error &&
+			TEMPORARY_STORAGE_ERRORS.has(String(error.code))
+		) {
+			throw new ArtifactValidationError(
+				'Temporary archive storage is unavailable',
+				'VALIDATOR_UNAVAILABLE',
+			)
+		}
 		throw new ArtifactValidationError(
 			'Artifact is not a valid, unambiguous ZIP archive',
 			'INVALID_ARCHIVE',
