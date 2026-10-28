@@ -1,4 +1,5 @@
 export interface AppConfig {
+	enableMapValidation?: boolean
 	apiKey?: string
 	artifactAllowedHosts: string[]
 	corsOrigins: '*' | string[]
@@ -43,6 +44,7 @@ export function loadAppConfig(): AppConfig {
 	}
 
 	return {
+		enableMapValidation: readBoolean('ENABLE_MAP_ARTIFACT_VALIDATION', false),
 		apiKey,
 		artifactAllowedHosts:
 			process.env.ARTIFACT_ALLOWED_HOSTS?.split(',')

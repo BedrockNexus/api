@@ -5,7 +5,9 @@ import {
 	type ArtifactType,
 	validateArtifact,
 } from '../lib/artifact-validator'
+import { validateRemoteMap } from '../lib/remote-map-validator'
 import { requireApiKey } from '../middleware/api-key'
+import { concurrencyLimit } from '../middleware/concurrency-limit'
 
 interface ValidationBody {
 	type?: unknown
@@ -17,6 +19,7 @@ interface ValidationBody {
 export function createArtifactValidationRoutes(args: {
 	apiKey?: string
 	allowedHosts: string[]
+	enableMaps?: boolean
 }) {
 	const app = new Hono()
 	app.use('*', requireApiKey(args.apiKey))
@@ -57,6 +60,41 @@ export function createArtifactValidationRoutes(args: {
 			return c.json(result, 503)
 		}
 		return c.json(result)
+	})
+	app.use('/maps', concurrencyLimit(1))
+	app.post('/maps', async (c) => {
+		if (!args.enableMaps)
+			return c.json({ error: 'Maps validation is not enabled' }, 404)
+		let body: unknown
+		try {
+			body = await c.req.json()
+		} catch {
+			return c.json({ error: 'A valid JSON body is required' }, 400)
+		}
+		if (!body || typeof body !== 'object')
+			return c.json({ error: 'Invalid Maps request' }, 400)
+		const value = body as Record<string, unknown>
+		if (
+			value.type !== 'map' ||
+			typeof value.fileName !== 'string' ||
+			typeof value.fileSize !== 'number' ||
+			typeof value.downloadUrl !== 'string' ||
+			typeof value.sourceEtag !== 'string'
+		)
+			return c.json({ error: 'Invalid Maps request' }, 400)
+		const result = await validateRemoteMap(
+			{
+				fileName: value.fileName,
+				fileSize: value.fileSize,
+				downloadUrl: value.downloadUrl,
+				sourceEtag: value.sourceEtag,
+			},
+			args.allowedHosts,
+		)
+		return c.json(
+			result,
+			!result.valid && result.code === 'VALIDATOR_UNAVAILABLE' ? 503 : 200,
+		)
 	})
 	return app
 }

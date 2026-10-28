@@ -13,6 +13,7 @@ export function createWorkerApp(config: AppConfig = loadAppConfig()) {
 		createArtifactValidationRoutes({
 			apiKey: config.apiKey,
 			allowedHosts: config.artifactAllowedHosts,
+			enableMaps: config.enableMapValidation,
 		}),
 	)
 	app.notFound((c) => c.json({ error: 'Not found' }, 404))

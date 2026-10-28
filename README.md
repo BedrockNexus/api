@@ -149,6 +149,52 @@ pack/manifest checksums are verified.
 Temporary storage failures return HTTP 503 with `VALIDATOR_UNAVAILABLE` so
 Convex retries validation instead of deleting an artifact as malformed.
 
+## Local Maps evaluation (not enabled for publishing)
+
+An offline Maps validator is available for development:
+
+```powershell
+bun run src/check-map.ts tests/fixtures/maps/SampleParkourWorld.mcworld
+```
+
+It accepts local `.mcworld` byte snapshots, verifies all regular-entry CRCs,
+checks the world root and bounded Bedrock file-NBT metadata, resolves unpacked
+pack identities/references, and returns a SHA-256 and sanitized observations.
+It never opens LevelDB, imports a world, executes scripts, or changes source worlds.
+The CLI streams the source into an owned temporary snapshot and removes that
+snapshot after validation, including after rejection.
+The pinned official sample and its MIT notice are in `tests/fixtures/maps/`.
+
+Evaluation supports metadata header version 9 and pack manifest format 2.
+Limits are provisional: 256 MiB compressed for in-memory tests, 512 MiB for the
+file-backed local runner, 4 GiB expanded, 10,000 entries,
+200:1 expansion, 1 MiB metadata/JSON, 64 packs, and a 64 KiB report. NBT parsing
+also bounds nesting, tag count, string bytes and collection length. The runner
+does not buffer complete archives in memory. Its local disk use is bounded by
+the snapshot cap; this is not hosted memory/disk/concurrency acceptance.
+The file-backed ceiling was added to evaluate two supplied exports that exceed
+the existing pack cap; it is not a production Maps upload policy.
+
+`/artifact-validate` still rejects `type: "map"`. The separate authenticated
+`POST /artifact-validate/maps` endpoint is disabled by default. Local integration
+tests can enable it with `ENABLE_MAP_ARTIFACT_VALIDATION=true`; the matching
+Hub still blocks public Maps creation. This flag is not enabled or deployed by
+this work. Before enabling publishing, complete representative packed-world,
+hosted capacity and full publishing acceptance. Successful structural checks
+do not establish database integrity or Minecraft import/playability. Mods remain paused.
+
+The Maps request uses `type: "map"`, `fileName`, `fileSize`, `downloadUrl` and
+`sourceEtag`. Hub seals the writable upload into a distinct server-controlled
+private object first. The endpoint fetches that object once with `If-Match`,
+rejects redirects/changed ETags/size mismatches, streams a bounded temporary
+snapshot and returns the structural report plus the actual SHA-256 and source
+ETag. It permits one Maps validation at a time per API instance; excess requests
+receive HTTP 503. Temporary fetch/storage failures also return 503 and retain
+the private artifact for retry. Evaluation limits remain provisional.
+
+See [the local evaluation record](docs/MAPS_EVALUATION.md) for fixtures, results
+and remaining coverage.
+
 ## Deployment
 
 Coolify builds and deploys the API from source with Railpack on pushes to
