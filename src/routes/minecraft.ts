@@ -20,9 +20,7 @@ app.get('/status', async (c) => {
 	try {
 		const port = parsePort(c.req.query('port'))
 		const timeout = parseTimeout(c.req.query('timeout'))
-		const startedAt = performance.now()
 		const result = await pingBedrockServer(host, port, timeout)
-		const latencyMs = Math.max(1, Math.round(performance.now() - startedAt))
 
 		if (!result.online) {
 			return c.json({
@@ -34,7 +32,7 @@ app.get('/status', async (c) => {
 
 		return c.json({
 			gamemode: result.gamemode ?? '',
-			latencyMs,
+			latencyMs: result.latencyMs,
 			mapName: result.mapName ?? '',
 			motd: result.motd ?? '',
 			online: true,

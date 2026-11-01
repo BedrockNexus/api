@@ -6,9 +6,9 @@ validation.
 
 ## Features
 
-- Bedrock status queries over native RakNet UDP ping
+- Bedrock status queries over RakNet UDP ping and NetherNet `GET /v1/join`
 - DNS TXT and Bedrock MOTD ownership verification
-- Private and reserved network blocking before outbound UDP traffic
+- Private and reserved network blocking before outbound UDP and TCP traffic
 - Bounded ports, timeouts, concurrency, request bodies, and request rates
 - API-key protection for internal verification routes
 - Conservative detection of default or explicitly branded Geyser responses
@@ -73,6 +73,11 @@ Query parameters:
 ```
 
 Private, loopback, link-local, reserved, and mixed public/private DNS targets are rejected.
+
+A server counts as online if it answers either transport: a RakNet unconnected
+ping over UDP, or NetherNet's `GET /v1/join` over HTTPS or HTTP on TCP. When it
+answers both, NetherNet's values are reported. `latencyMs` is one round trip:
+the RakNet ping when available, otherwise the TCP connect.
 
 ## Internal Endpoints
 
@@ -198,7 +203,7 @@ The result is `native_bedrock`, `geyser_likely`, or `ambiguous`. Automatic owner
 | `TRUST_PROXY_HEADERS` | Trust proxy-replaced client IP headers | `false` |
 | `GENERAL_RATE_LIMIT` | General requests per minute per key | `60` |
 | `STATUS_RATE_LIMIT` | Status requests per minute per key | `30` |
-| `MAX_CONCURRENT_STATUS_CHECKS` | Simultaneous UDP checks per instance | `25` |
+| `MAX_CONCURRENT_STATUS_CHECKS` | Simultaneous status checks per instance | `25` |
 | `MAX_QUEUED_STATUS_CHECKS` | Status requests with the API key that may wait for a free slot; public requests are rejected instead | `1000` |
 | `ARTIFACT_ALLOWED_HOSTS` | Exact comma-separated R2 hosts accepted by the validator worker | none |
 
