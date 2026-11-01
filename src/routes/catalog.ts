@@ -1,11 +1,13 @@
 import type { Context } from 'hono'
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { catalogOpenApiDocument } from '../lib/catalog-openapi'
 import {
 	type CategoryDoc,
 	type ContentDoc,
 	type ContentReleaseDoc,
 	type GameVersionDoc,
+	type LatestReleaseDoc,
 	type PluginCardDoc,
 	type PluginDoc,
 	type ServerDoc,
@@ -15,13 +17,16 @@ import {
 	toContentRelease,
 	toContentSummary,
 	toContentType,
+	toGameVersionView,
 	toPluginDetail,
 	toPluginRelease,
 	toPluginSummary,
 	toServerDetail,
 	toServerSummary,
 	toSoftwareView,
+	toUpdateView,
 } from '../lib/catalog-views'
+import { ConvexMutationError } from '../lib/convex-mutation'
 import {
 	type ConvexQuery,
 	ConvexQueryError,
@@ -64,6 +69,10 @@ const SERVER_SORTS = [
 	'saved',
 ] as const
 const SERVER_STATUSES = ['online', 'offline'] as const
+const UPDATE_SECTIONS = ['addons', 'resource-packs', 'plugins'] as const
+const MAX_UPDATE_ITEMS = 100
+const MAX_UPDATE_BODY_BYTES = 64 * 1024
+const MAX_VERSION_LENGTH = 100
 
 /** Add-ons and resource packs share Hub's queries but are separate sections. */
 const CONTENT_SECTIONS = [
@@ -90,6 +99,7 @@ const QUERIES = {
 	contentReleases: 'functions/projects/versions:listPublic',
 	features: 'functions/site/settings:getFeatures',
 	gameVersions: 'functions/site/gameVersions:listActive',
+	latestReleases: 'functions/site/releases:latest',
 	pluginBrowse: 'functions/plugins/catalog:explore',
 	pluginCategories: 'functions/plugins/categories:list',
 	pluginGet: 'functions/plugins/catalog:getProject',
@@ -197,6 +207,51 @@ function readReference(c: Context, resource: string) {
 	return reference
 }
 
+interface UpdateItem {
+	id: string
+	section: (typeof UPDATE_SECTIONS)[number]
+	version?: string
+}
+
+function readUpdateItems(body: unknown): UpdateItem[] {
+	const items = (body as { items?: unknown } | null)?.items
+	if (!Array.isArray(items) || items.length === 0) {
+		throw invalidParameter('items', 'must be a non-empty array')
+	}
+	if (items.length > MAX_UPDATE_ITEMS) {
+		throw invalidParameter(
+			'items',
+			`accepts at most ${MAX_UPDATE_ITEMS} entries`,
+		)
+	}
+	return items.map((item: unknown, index) => {
+		const { id, section, version } = (item ?? {}) as Record<string, unknown>
+		const name = `items[${index}]`
+		if (!UPDATE_SECTIONS.includes(section as UpdateItem['section'])) {
+			throw invalidParameter(
+				name,
+				`section must be one of ${UPDATE_SECTIONS.join(', ')}`,
+			)
+		}
+		if (typeof id !== 'string' || !id || id.length > MAX_REFERENCE_LENGTH) {
+			throw invalidParameter(name, 'id must be a stable ID or slug')
+		}
+		if (
+			version !== undefined &&
+			(typeof version !== 'string' ||
+				!version ||
+				version.length > MAX_VERSION_LENGTH)
+		) {
+			throw invalidParameter(name, 'version must be a version string')
+		}
+		return {
+			id,
+			section: section as UpdateItem['section'],
+			version: version as string | undefined,
+		}
+	})
+}
+
 interface BrowsePage<Doc> {
 	continueCursor: string
 	isDone: boolean
@@ -205,9 +260,14 @@ interface BrowsePage<Doc> {
 
 export function createCatalogRoutes(options: {
 	hubUrl: string
+	apiUrl?: string
+	downloadSecret?: string
+	mutation?: ConvexQuery
+	clientKey?: (headers: Headers) => string
 	query?: ConvexQuery
 }) {
 	const { hubUrl, query } = options
+	const apiUrl = options.apiUrl ?? 'https://api.bedrocknexus.com'
 	const app = new Hono()
 
 	const runQuery: ConvexQuery = async (path, args) => {
@@ -219,6 +279,54 @@ export function createCatalogRoutes(options: {
 			)
 		}
 		return await query(path, args)
+	}
+
+	async function download(
+		c: Context,
+		path: string,
+		args: Record<string, unknown>,
+	) {
+		c.header('Cache-Control', 'private, no-store, max-age=0')
+		if (c.req.method === 'HEAD') return c.body(null, 405, { Allow: 'GET' })
+		if (!options.downloadSecret || !options.mutation || !options.clientKey) {
+			return c.json(
+				{
+					error: {
+						code: 'DOWNLOAD_UNAVAILABLE',
+						message: 'Downloads are not configured',
+					},
+				},
+				503,
+			)
+		}
+		const result = await options.mutation<{
+			ok?: boolean
+			code?: string
+			message?: string
+			url?: string
+			counted?: boolean
+		}>(path, { ...args, source: 'api' })
+		if (result.ok === false || !result.url) {
+			const status =
+				result.code === 'FILE_MISSING'
+					? 410
+					: result.code === 'VERSION_PROCESSING' ||
+							result.code === 'VERSION_NOT_VALIDATED'
+						? 409
+						: 404
+			return c.json(
+				{
+					error: {
+						code: result.code ?? 'NOT_FOUND',
+						message: result.message ?? 'Download not found',
+					},
+				},
+				status,
+			)
+		}
+		if (result.counted !== undefined)
+			c.header('X-BedrockNexus-Download-Counted', result.counted ? '1' : '0')
+		return c.redirect(result.url, 307)
 	}
 
 	/** Runs a listing query. Only a cursor can make these fail on their input. */
@@ -328,7 +436,9 @@ export function createCatalogRoutes(options: {
 			)
 			c.header('Cache-Control', CONTENT_CACHE)
 			return c.json({
-				data: releases.map((release) => toContentRelease(release, hubUrl)),
+				data: releases.map((release) =>
+					toContentRelease(release, apiUrl, path.slice(1), content._id),
+				),
 			})
 		})
 
@@ -343,7 +453,9 @@ export function createCatalogRoutes(options: {
 				throw notFound('Release')
 			}
 			c.header('Cache-Control', CONTENT_CACHE)
-			return c.json({ data: toContentRelease(release, hubUrl) })
+			return c.json({
+				data: toContentRelease(release, apiUrl, path.slice(1), content._id),
+			})
 		})
 
 		app.get(`${path}/:reference/releases/:version`, async (c) => {
@@ -358,7 +470,14 @@ export function createCatalogRoutes(options: {
 				throw notFound('Release')
 			}
 			c.header('Cache-Control', CONTENT_CACHE)
-			return c.json({ data: toContentRelease(release, hubUrl) })
+			return c.json({
+				data: toContentRelease(
+					release,
+					apiUrl,
+					path.slice(1),
+					release.project?.reference ?? readReference(c, label),
+				),
+			})
 		})
 
 		app.get(categoriesPath, async (c) => {
@@ -369,6 +488,46 @@ export function createCatalogRoutes(options: {
 			c.header('Cache-Control', TAXONOMY_CACHE)
 			return c.json({ data: categories.map(toCategoryView) })
 		})
+
+		app.on(
+			['GET', 'HEAD'],
+			`${path}/:reference/releases/:version/download`,
+			async (c) => {
+				if (c.req.method === 'HEAD')
+					return c.body(null, 405, {
+						Allow: 'GET',
+						'Cache-Control': 'no-store',
+					})
+				const content = await getContent(readReference(c, label))
+				const requested = c.req.param('version') ?? ''
+				if (!requested || requested.length > MAX_VERSION_LENGTH)
+					throw notFound('Release')
+				const release =
+					requested === 'latest'
+						? await runQuery<ContentReleaseDoc | null>(
+								QUERIES.contentLatestRelease,
+								{ projectId: content._id },
+							)
+						: await runQuery<ContentReleaseDoc | null>(QUERIES.contentRelease, {
+								slug: readReference(c, label),
+								version: requested,
+							})
+				if (
+					!release ||
+					(release.project && toContentType(release.project.type) !== type)
+				)
+					throw notFound('Release')
+				return await download(
+					c,
+					'functions/projects/versions:createDownloadUrl',
+					{
+						versionId: release._id,
+						downloadSecret: options.downloadSecret,
+						clientKey: options.clientKey?.(c.req.raw.headers),
+					},
+				)
+			},
+		)
 	}
 
 	// The plugin registry can be switched off site-wide; Hub hides its pages then.
@@ -434,7 +593,7 @@ export function createCatalogRoutes(options: {
 		c.header('Cache-Control', CONTENT_CACHE)
 		return c.json({
 			data: plugin.versions.map((version) =>
-				toPluginRelease(plugin.project.publicId, version, hubUrl),
+				toPluginRelease(plugin.project.publicId, version, apiUrl),
 			),
 		})
 	})
@@ -449,7 +608,7 @@ export function createCatalogRoutes(options: {
 		}
 		c.header('Cache-Control', CONTENT_CACHE)
 		return c.json({
-			data: toPluginRelease(plugin.project.publicId, version, hubUrl),
+			data: toPluginRelease(plugin.project.publicId, version, apiUrl),
 		})
 	})
 
@@ -465,7 +624,7 @@ export function createCatalogRoutes(options: {
 		}
 		c.header('Cache-Control', CONTENT_CACHE)
 		return c.json({
-			data: toPluginRelease(plugin.project.publicId, version, hubUrl),
+			data: toPluginRelease(plugin.project.publicId, version, apiUrl),
 		})
 	})
 
@@ -474,6 +633,32 @@ export function createCatalogRoutes(options: {
 		c.header('Cache-Control', TAXONOMY_CACHE)
 		return c.json({ data: categories.map(toCategoryView) })
 	})
+
+	app.on(
+		['GET', 'HEAD'],
+		'/plugins/:reference/releases/:version/download',
+		async (c) => {
+			if (c.req.method === 'HEAD')
+				return c.body(null, 405, { Allow: 'GET', 'Cache-Control': 'no-store' })
+			const plugin = await getPlugin(readReference(c, 'Plugin'))
+			const requested = c.req.param('version')
+			const selected =
+				requested === 'latest'
+					? plugin.project.latestVersion?.version
+					: requested
+			const version = plugin.versions.find(
+				(item) =>
+					item.version === selected || item.normalizedVersion === selected,
+			)
+			if (!version?.release?.asset) throw notFound('Release')
+			return await download(c, 'functions/plugins/downloads:resolveAndRecord', {
+				projectSlug: plugin.project.publicId,
+				version: version.normalizedVersion,
+				anonymousIdHash: options.clientKey?.(c.req.raw.headers),
+				redirectSecret: options.downloadSecret,
+			})
+		},
+	)
 
 	app.get('/servers', async (c) => {
 		const pagination = readPagination(c)
@@ -529,8 +714,36 @@ export function createCatalogRoutes(options: {
 	app.get('/game-versions', async (c) => {
 		const versions = await runQuery<GameVersionDoc[]>(QUERIES.gameVersions)
 		c.header('Cache-Control', TAXONOMY_CACHE)
-		return c.json({ data: versions.map(({ version }) => version) })
+		return c.json({ data: versions.map(toGameVersionView) })
 	})
+
+	app.post(
+		'/updates',
+		bodyLimit({
+			maxSize: MAX_UPDATE_BODY_BYTES,
+			onError: () => {
+				throw invalidParameter('items', 'the request is too large')
+			},
+		}),
+		async (c) => {
+			const items = readUpdateItems(await c.req.json().catch(() => null))
+			const latest = await runQuery<LatestReleaseDoc[]>(
+				QUERIES.latestReleases,
+				{
+					items: items.map(({ id, section }) => ({
+						reference: id,
+						section,
+					})),
+				},
+			)
+			c.header('Cache-Control', 'no-store')
+			return c.json({
+				data: items.map((item, index) =>
+					toUpdateView(item, latest[index] ?? null, apiUrl),
+				),
+			})
+		},
+	)
 
 	app.get('/openapi.json', (c) => {
 		c.header('Cache-Control', TAXONOMY_CACHE)
@@ -544,6 +757,43 @@ export function createCatalogRoutes(options: {
 
 	app.onError((error, c) => {
 		c.header('Cache-Control', 'no-store')
+		if (error instanceof ConvexMutationError) {
+			const data = error.data as {
+				code?: string
+				retryAfterMs?: number
+				retryAfter?: number
+			} | null
+			if (
+				data?.code === 'RATE_LIMITED' ||
+				data?.code === 'DOWNLOAD_RATE_LIMITED'
+			) {
+				const ms = data.retryAfterMs ?? data.retryAfter ?? 1000
+				c.header('Retry-After', String(Math.max(1, Math.ceil(ms / 1000))))
+				return c.json(
+					{
+						error: {
+							code: 'DOWNLOAD_RATE_LIMITED',
+							message: 'Too many download requests',
+						},
+					},
+					429,
+				)
+			}
+			if (data?.code === 'DOWNLOAD_NOT_FOUND')
+				return c.json(
+					{ error: { code: 'NOT_FOUND', message: 'Download not found' } },
+					404,
+				)
+			return c.json(
+				{
+					error: {
+						code: 'DOWNLOAD_UNAVAILABLE',
+						message: 'Downloads are temporarily unavailable',
+					},
+				},
+				503,
+			)
+		}
 		if (error instanceof CatalogError) {
 			return c.json(
 				{ error: { code: error.code, message: error.message } },

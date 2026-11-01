@@ -1,4 +1,8 @@
 export interface AppConfig {
+	apiUrl?: string
+	downloadRedirectSecret?: string
+	clientIpHeader?: string
+	trustedProxyHops?: number
 	apiKey?: string
 	artifactAllowedHosts: string[]
 	catalogRateLimit: number
@@ -46,6 +50,13 @@ export function loadAppConfig(): AppConfig {
 	}
 
 	return {
+		apiUrl:
+			process.env.API_PUBLIC_URL?.trim() || 'https://api.bedrocknexus.com',
+		downloadRedirectSecret:
+			process.env.DOWNLOAD_REDIRECT_SECRET?.trim() || undefined,
+		clientIpHeader:
+			process.env.CLIENT_IP_HEADER?.trim().toLowerCase() || undefined,
+		trustedProxyHops: readPositiveInteger('TRUSTED_PROXY_HOPS', 1),
 		apiKey,
 		artifactAllowedHosts:
 			process.env.ARTIFACT_ALLOWED_HOSTS?.split(',')

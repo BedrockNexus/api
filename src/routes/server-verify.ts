@@ -7,7 +7,6 @@ import {
 	parseVerificationCode,
 	RequestValidationError,
 } from '../lib/request-validation'
-import { inspectServerSoftware } from '../lib/server-software'
 import { requireApiKey } from '../middleware/api-key'
 
 const VERIFICATION_PREFIX = 'bedrocknexus-verify='
@@ -25,30 +24,6 @@ interface VerificationRequest {
 interface VerificationResult {
 	error?: string
 	verified: boolean
-}
-
-async function rejectUnsupportedSoftware(
-	host: string,
-	port: number,
-	server: Awaited<ReturnType<typeof pingBedrockServer>>,
-): Promise<VerificationResult | null> {
-	const inspection = await inspectServerSoftware(host, port, server)
-	if (inspection.classification === 'native_bedrock') {
-		return null
-	}
-
-	const details = inspection.reasons.join('; ')
-	if (inspection.classification === 'geyser_likely') {
-		return {
-			error: `This appears to be a Java server using Geyser. ${details}`,
-			verified: false,
-		}
-	}
-
-	return {
-		error: `This server also exposes Java Edition and could not be confirmed as native Bedrock. ${details}`,
-		verified: false,
-	}
 }
 
 async function verifyDnsRecord(
@@ -98,10 +73,6 @@ async function verifyDnsRecord(
 			verified: false,
 		}
 	}
-	const softwareError = await rejectUnsupportedSoftware(host, port, server)
-	if (softwareError) {
-		return softwareError
-	}
 
 	return { verified: true }
 }
@@ -136,11 +107,7 @@ async function verifyMotd(
 		}
 	}
 
-	return (
-		(await rejectUnsupportedSoftware(host, port, server)) ?? {
-			verified: true,
-		}
-	)
+	return { verified: true }
 }
 
 function readMethod(value: unknown): VerificationMethod {

@@ -2,7 +2,6 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import dgram from 'node:dgram'
 import net from 'node:net'
 import {
-	detectGeyserFromMotd,
 	mergeTransportResults,
 	parseBedrockPong,
 	parseNetherNetStatus,
@@ -43,7 +42,6 @@ describe('Bedrock pong parsing', () => {
 		expect(result).toEqual({
 			edition: 'MCPE',
 			gamemode: 'Survival',
-			geyserDetected: false,
 			mapName: 'Second line',
 			maxPlayers: 100,
 			motd: 'Bedrock Nexus',
@@ -54,16 +52,6 @@ describe('Bedrock pong parsing', () => {
 			serverId: 'server-id',
 			version: '1.21.80',
 		})
-	})
-
-	test('detects Geyser default and explicit branding', () => {
-		expect(detectGeyserFromMotd('Geyser', 'Another Geyser server.')).toBe(true)
-		expect(
-			detectGeyserFromMotd('Crossplay server', 'Visit geysermc.org for help'),
-		).toBe(true)
-		expect(detectGeyserFromMotd('Native Bedrock', 'Survival network')).toBe(
-			false,
-		)
 	})
 
 	test('rejects packets with the wrong timestamp or magic', () => {
@@ -115,7 +103,6 @@ describe('NetherNet status parsing', () => {
 	test('maps the documented fields', () => {
 		expect(parseNetherNetStatus(NETHERNET_BODY)).toEqual({
 			gamemode: 'Survival',
-			geyserDetected: false,
 			mapName: 'Server Network',
 			maxPlayers: 30,
 			motd: 'Halloween',
@@ -124,16 +111,6 @@ describe('NetherNet status parsing', () => {
 			protocolVersion: 2225,
 			version: '1.26.60',
 		})
-	})
-
-	test('detects Geyser branding from the server name and level', () => {
-		const body = JSON.parse(NETHERNET_BODY)
-
-		expect(
-			parseNetherNetStatus(
-				JSON.stringify({ ...body, level: 'Another Geyser server.' }),
-			)?.geyserDetected,
-		).toBe(true)
 	})
 
 	test.each([
@@ -183,7 +160,6 @@ describe('transport merging', () => {
 	const raknet = {
 		edition: 'MCPE',
 		gamemode: 'Creative',
-		geyserDetected: true,
 		latencyMs: 10,
 		mapName: 'RakNet level',
 		motd: 'RakNet',
@@ -193,7 +169,6 @@ describe('transport merging', () => {
 		version: '1.0',
 	}
 	const nethernet = {
-		geyserDetected: false,
 		latencyMs: 20,
 		motd: 'NetherNet',
 		online: true,
@@ -210,7 +185,6 @@ describe('transport merging', () => {
 		expect(mergeTransportResults(raknet, nethernet)).toEqual({
 			edition: 'MCPE',
 			gamemode: 'Creative',
-			geyserDetected: true,
 			latencyMs: 10,
 			mapName: 'RakNet level',
 			motd: 'NetherNet',

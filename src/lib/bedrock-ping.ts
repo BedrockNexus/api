@@ -26,7 +26,6 @@ const BEDROCK_GAME_TYPES: Readonly<Record<number, string>> = {
 export interface BedrockServerInfo {
 	edition?: string
 	gamemode?: string
-	geyserDetected?: boolean
 	latencyMs?: number
 	mapName?: string
 	maxPlayers?: number
@@ -37,28 +36,6 @@ export interface BedrockServerInfo {
 	protocolVersion?: number
 	serverId?: string
 	version?: string
-}
-
-function normalizeSoftwareMarker(value: string | undefined) {
-	return (value ?? '').replaceAll(/§./g, '').trim().toLowerCase()
-}
-
-export function detectGeyserFromMotd(
-	motd: string | undefined,
-	subMotd: string | undefined,
-) {
-	const primary = normalizeSoftwareMarker(motd)
-	const secondary = normalizeSoftwareMarker(subMotd)
-
-	return (
-		primary === 'geyser' ||
-		primary === 'geysermc' ||
-		secondary === 'geyser' ||
-		secondary === 'geysermc' ||
-		secondary.startsWith('another geyser server') ||
-		primary.includes('geysermc.org') ||
-		secondary.includes('geysermc.org')
-	)
 }
 
 function parseNumber(value: string | undefined) {
@@ -108,16 +85,12 @@ export function parseBedrockPong(
 		return null
 	}
 
-	const motd = parts[1]
-	const mapName = parts[7]
-
 	return {
 		edition: parts[0],
 		gamemode: parts[8],
-		geyserDetected: detectGeyserFromMotd(motd, mapName),
-		mapName,
+		mapName: parts[7],
 		maxPlayers: parseNumber(parts[5]) ?? 0,
-		motd,
+		motd: parts[1],
 		online: true,
 		playerCount: parseNumber(parts[4]) ?? 0,
 		port: parseNumber(parts[10]),
@@ -166,7 +139,6 @@ export function parseNetherNetStatus(body: string): BedrockServerInfo | null {
 			typeof data.gameType === 'number'
 				? BEDROCK_GAME_TYPES[data.gameType]
 				: undefined,
-		geyserDetected: detectGeyserFromMotd(data.name, mapName),
 		mapName,
 		maxPlayers: data.maxPlayers,
 		motd: data.name,
@@ -422,7 +394,6 @@ export function mergeTransportResults(
 		...raknet,
 		...nethernet,
 		gamemode: nethernet.gamemode ?? raknet.gamemode,
-		geyserDetected: raknet.geyserDetected || nethernet.geyserDetected,
 		latencyMs: raknet.latencyMs,
 		mapName: nethernet.mapName ?? raknet.mapName,
 	}

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { createApp } from '../src/app'
 import type { AppConfig } from '../src/config'
 import { catalogOpenApiDocument } from '../src/lib/catalog-openapi'
+import { ConvexMutationError } from '../src/lib/convex-mutation'
 import {
 	ConvexQueryError,
 	ConvexUnavailableError,
@@ -201,9 +202,13 @@ interface Call {
 	path: string
 }
 
-function createRoutes(results: Record<string, unknown>) {
+function createRoutes(
+	results: Record<string, unknown>,
+	options: Partial<Parameters<typeof createCatalogRoutes>[0]> = {},
+) {
 	const calls: Call[] = []
 	const app = createCatalogRoutes({
+		...options,
 		hubUrl: HUB_URL,
 		query: async <Result>(path: string, args: Record<string, unknown> = {}) => {
 			calls.push({ args, path })
@@ -334,7 +339,7 @@ describe.each([
 		expect(body.error.code).toBe('NOT_FOUND')
 	})
 
-	test('lists releases with absolute Hub download URLs', async () => {
+	test('lists releases with canonical API download URLs', async () => {
 		const { app, calls } = createRoutes({
 			[GET_CONTENT]: doc,
 			[LIST_RELEASES]: [contentRelease],
@@ -347,7 +352,7 @@ describe.each([
 			{
 				changelog: 'Notes',
 				downloads: 3,
-				downloadUrl: `${HUB_URL}/api/projects/versions/rel1/download`,
+				downloadUrl: `https://api.bedrocknexus.com/v1${path}/${doc._id}/releases/1.0.0/download`,
 				fileName: 'dragons.mcaddon',
 				fileSize: 10,
 				gameVersions: ['1.26.60'],
@@ -356,6 +361,17 @@ describe.each([
 				version: '1.0.0',
 			},
 		])
+	})
+
+	test('publishes the checksum when Hub has one', async () => {
+		const { app } = createRoutes({
+			[GET_CONTENT]: doc,
+			[LATEST_RELEASE]: { ...contentRelease, sha256: 'abc123' },
+		})
+
+		const { body } = await getJson(app, `${path}/${doc.slug}/releases/latest`)
+
+		expect(body.data.sha256).toBe('abc123')
 	})
 
 	test('treats "latest" as the newest release, not a version string', async () => {
@@ -595,7 +611,8 @@ describe('catalog /plugins', () => {
 			buildLogsUrl: 'https://logs.example',
 			changelog: 'Plugin notes',
 			commitSha: 'deadbeef',
-			downloadUrl: `${HUB_URL}/plugins/p_abc/download/1.1.0`,
+			downloadUrl:
+				'https://api.bedrocknexus.com/v1/plugins/p_abc/releases/1.1.0/download',
 			fileName: 'Economy.phar',
 			fileSize: 20,
 			gameVersions: ['1.26.60'],
@@ -700,6 +717,18 @@ describe('catalog /servers', () => {
 		const { body } = await getJson(app, '/servers/server')
 
 		expect(body.data.url).toBe(`${HUB_URL}/server/play.example.net`)
+	})
+
+	test('says whether a server is in the directory', async () => {
+		const { app } = createRoutes({
+			[GET_SERVER]: { ...server, offlineHiddenAt: 1 },
+		})
+		const { app: listedApp } = createRoutes({ [GET_SERVER]: server })
+
+		expect((await getJson(app, '/servers/server')).body.data.listed).toBe(false)
+		expect((await getJson(listedApp, '/servers/server')).body.data.listed).toBe(
+			true,
+		)
 	})
 
 	test('reports null status for a server not checked yet', async () => {
@@ -823,7 +852,23 @@ describe('catalog filter values', () => {
 			},
 		])
 		expect((await getJson(app, '/game-versions')).body.data).toEqual([
-			'1.26.60',
+			{ name: '1.26.60', version: '1.26.60' },
+		])
+	})
+
+	test('separates the Minecraft version from the name the site shows', async () => {
+		const { app } = createRoutes({
+			'functions/site/gameVersions:listActive': [
+				{ version: '26.60 (1.26.60)' },
+				{ version: '26.23' },
+			],
+		})
+
+		const { body } = await getJson(app, '/game-versions')
+
+		expect(body.data).toEqual([
+			{ name: '26.60 (1.26.60)', version: '1.26.60' },
+			{ name: '26.23', version: '26.23' },
 		])
 	})
 
@@ -838,6 +883,203 @@ describe('catalog filter values', () => {
 		const { response } = await getJson(app, url)
 
 		expect(response.status).toBe(404)
+	})
+})
+
+describe('catalog /updates', () => {
+	const LATEST = 'functions/site/releases:latest'
+	const release = {
+		downloadPath: '/plugins/p_abc/download/1.1.0',
+		fileName: 'Economy.phar',
+		fileSize: 20,
+		gameVersions: ['1.26.60'],
+		publishedAt: 1_700_000_000_000,
+		sha256: 'abc123',
+		version: 'v1.1.0',
+	}
+
+	function post(app: ReturnType<typeof createCatalogRoutes>, body: unknown) {
+		return app.request('/updates', {
+			body: typeof body === 'string' ? body : JSON.stringify(body),
+			headers: { 'Content-Type': 'application/json' },
+			method: 'POST',
+		})
+	}
+
+	test('reports each item in request order with one Hub query', async () => {
+		const { app, calls } = createRoutes({
+			[LATEST]: [
+				{ id: 'p_abc', release, slug: 'economy' },
+				null,
+				{ id: 'addon1', release: null, slug: 'dragons' },
+				{
+					id: 'pack1',
+					release: { ...release, version: '2.0.0' },
+					slug: 'pack',
+				},
+			],
+		})
+
+		const response = await post(app, {
+			items: [
+				{ id: 'p_abc', section: 'plugins', version: 'v1.0.0' },
+				{ id: 'gone', section: 'addons', version: '1.0.0' },
+				{ id: 'addon1', section: 'addons', version: '1.0.0' },
+				{ id: 'pack', section: 'resource-packs', version: '2.0.0' },
+			],
+		})
+		// biome-ignore lint/suspicious/noExplicitAny: assertions read the response shape.
+		const body = (await response.json()) as any
+
+		expect(calls).toHaveLength(1)
+		expect(calls[0].args.items).toEqual([
+			{ reference: 'p_abc', section: 'plugins' },
+			{ reference: 'gone', section: 'addons' },
+			{ reference: 'addon1', section: 'addons' },
+			{ reference: 'pack', section: 'resource-packs' },
+		])
+		expect(response.headers.get('Cache-Control')).toBe('no-store')
+		expect(body.data[0]).toEqual({
+			found: true,
+			id: 'p_abc',
+			installedVersion: 'v1.0.0',
+			latestVersion: 'v1.1.0',
+			release: {
+				downloadUrl:
+					'https://api.bedrocknexus.com/v1/plugins/p_abc/releases/v1.1.0/download',
+				fileName: 'Economy.phar',
+				fileSize: 20,
+				gameVersions: ['1.26.60'],
+				publishedAt: '2023-11-14T22:13:20.000Z',
+				sha256: 'abc123',
+				version: 'v1.1.0',
+			},
+			section: 'plugins',
+			slug: 'economy',
+			updateAvailable: true,
+		})
+		expect(body.data[1]).toMatchObject({
+			found: false,
+			id: 'gone',
+			release: null,
+			updateAvailable: false,
+		})
+		expect(body.data[2]).toMatchObject({
+			found: true,
+			latestVersion: null,
+			updateAvailable: false,
+		})
+		expect(body.data[3]).toMatchObject({
+			found: true,
+			id: 'pack1',
+			updateAvailable: false,
+		})
+	})
+
+	test('does not claim an update when no version was sent', async () => {
+		const { app } = createRoutes({
+			[LATEST]: [{ id: 'p_abc', release, slug: 'economy' }],
+		})
+
+		const response = await post(app, {
+			items: [{ id: 'p_abc', section: 'plugins' }],
+		})
+		// biome-ignore lint/suspicious/noExplicitAny: assertions read the response shape.
+		const body = (await response.json()) as any
+
+		expect(body.data[0]).toMatchObject({
+			installedVersion: null,
+			latestVersion: 'v1.1.0',
+			updateAvailable: false,
+		})
+	})
+
+	test('reports a release with no file as not downloadable', async () => {
+		const { app } = createRoutes({
+			[LATEST]: [
+				{
+					id: 'p_abc',
+					release: {
+						...release,
+						downloadPath: null,
+						fileName: null,
+						fileSize: null,
+						publishedAt: null,
+						sha256: null,
+					},
+					slug: 'economy',
+				},
+			],
+		})
+
+		const response = await post(app, {
+			items: [{ id: 'p_abc', section: 'plugins' }],
+		})
+		// biome-ignore lint/suspicious/noExplicitAny: assertions read the response shape.
+		const body = (await response.json()) as any
+
+		expect(body.data[0].release).toMatchObject({
+			downloadUrl: null,
+			publishedAt: null,
+			sha256: null,
+		})
+	})
+
+	test.each([
+		['not JSON', 'nope'],
+		['no items', {}],
+		['an empty list', { items: [] }],
+		['a non-list', { items: 'x' }],
+		[
+			'too many items',
+			{ items: Array(101).fill({ id: 'x', section: 'addons' }) },
+		],
+		['an unknown section', { items: [{ id: 'x', section: 'projects' }] }],
+		['a missing id', { items: [{ section: 'addons' }] }],
+		['an empty id', { items: [{ id: '', section: 'addons' }] }],
+		['a long id', { items: [{ id: 'x'.repeat(257), section: 'addons' }] }],
+		[
+			'a non-string version',
+			{ items: [{ id: 'x', section: 'addons', version: 1 }] },
+		],
+		[
+			'a long version',
+			{ items: [{ id: 'x', section: 'addons', version: 'x'.repeat(101) }] },
+		],
+		['a null item', { items: [null] }],
+	])('rejects %s without querying Hub', async (_label, body) => {
+		const { app, calls } = createRoutes({})
+
+		const response = await post(app, body)
+
+		expect(response.status).toBe(400)
+		expect(
+			((await response.json()) as { error: { code: string } }).error.code,
+		).toBe('INVALID_PARAMETER')
+		expect(calls).toEqual([])
+	})
+
+	test('rejects an oversized request', async () => {
+		const { app, calls } = createRoutes({})
+
+		const response = await post(app, {
+			items: [{ id: 'x'.repeat(70_000), section: 'addons' }],
+		})
+
+		expect(response.status).toBe(400)
+		expect(calls).toEqual([])
+	})
+
+	test('answers 503 when Hub cannot answer', async () => {
+		const { app } = createRoutes({
+			[LATEST]: new ConvexUnavailableError('down'),
+		})
+
+		const response = await post(app, {
+			items: [{ id: 'x', section: 'addons' }],
+		})
+
+		expect(response.status).toBe(503)
 	})
 })
 
@@ -969,7 +1211,7 @@ describe('catalog contract', () => {
 		const { app } = createRoutes({})
 		const routes = new Set(
 			app.routes
-				.filter((route) => route.method === 'GET')
+				.filter((route) => route.method === 'GET' || route.method === 'POST')
 				.map((route) => `/v1${route.path}`.replaceAll(/:(\w+)/g, '{$1}'))
 				// `latest` is a documented value of `{version}`.
 				.filter((path) => !path.endsWith('/releases/latest')),
@@ -1050,7 +1292,9 @@ describe('catalog through the full app', () => {
 		const response = await createTestApp().request('/v1/game-versions')
 
 		expect(response.status).toBe(200)
-		expect(await response.json()).toEqual({ data: ['1.26.60'] })
+		expect(await response.json()).toEqual({
+			data: [{ name: '1.26.60', version: '1.26.60' }],
+		})
 		expect(received.at(-1)).toEqual({
 			body: {
 				args: {},
@@ -1109,5 +1353,126 @@ describe('catalog through the full app', () => {
 		})
 
 		expect(response.status).toBe(401)
+	})
+})
+
+describe('catalog download redirects', () => {
+	const target = 'https://cdn.example.test/file'
+	function downloads(result: unknown = { ok: true, url: target }) {
+		const mutations: Call[] = []
+		const { app, calls } = createRoutes(
+			{
+				...PLUGINS_ON,
+				[GET_CONTENT]: addon,
+				[GET_PLUGIN]: plugin,
+				[LATEST_RELEASE]: contentRelease,
+				[RELEASE_BY_VERSION]: { ...contentRelease, project: { type: 'addon' } },
+			},
+			{
+				downloadSecret: 'server-only-secret',
+				clientKey: () => 'a'.repeat(64),
+				mutation: async <Result>(
+					path: string,
+					args: Record<string, unknown> = {},
+				) => {
+					mutations.push({ path, args })
+					if (result instanceof Error) throw result
+					return result as Result
+				},
+			},
+		)
+		return { app, mutations, calls }
+	}
+	test('issues a non-cached redirect using the server secret and client key', async () => {
+		const { app, mutations } = downloads()
+		const response = await app.request(
+			'/addons/dragons/releases/1.0.0/download',
+		)
+		expect(response.status).toBe(307)
+		expect(response.headers.get('Location')).toBe(target)
+		expect(response.headers.get('Cache-Control')).toContain('no-store')
+		expect(mutations).toEqual([
+			{
+				path: 'functions/projects/versions:createDownloadUrl',
+				args: {
+					source: 'api',
+					versionId: 'rel1',
+					downloadSecret: 'server-only-secret',
+					clientKey: 'a'.repeat(64),
+				},
+			},
+		])
+	})
+	test('resolves latest before issuing the redirect', async () => {
+		const { app, mutations, calls } = downloads()
+		expect(
+			(await app.request('/addons/dragons/releases/latest/download')).status,
+		).toBe(307)
+		expect(calls[1].path).toBe(LATEST_RELEASE)
+		expect(mutations[0].args.versionId).toBe('rel1')
+	})
+	test('normalizes plugin versions and uses the same backend policy', async () => {
+		const { app, mutations } = downloads({ url: target, counted: true })
+		const response = await app.request(
+			'/plugins/p_abc/releases/v1.1.0/download',
+		)
+		expect(response.status).toBe(307)
+		expect(response.headers.get('X-BedrockNexus-Download-Counted')).toBe('1')
+		expect(mutations[0]).toMatchObject({
+			path: 'functions/plugins/downloads:resolveAndRecord',
+			args: { projectSlug: 'p_abc', version: '1.1.0', source: 'api' },
+		})
+	})
+	test('rejects a content type mismatch before any mutation', async () => {
+		const { app, mutations } = downloads()
+		expect(
+			(await app.request('/resource-packs/dragons/releases/1.0.0/download'))
+				.status,
+		).toBe(404)
+		expect(mutations).toHaveLength(0)
+	})
+	test('does not count HEAD requests', async () => {
+		for (const path of [
+			'/addons/dragons/releases/latest/download',
+			'/plugins/p_abc/releases/1.1.0/download',
+		]) {
+			const { app, mutations } = downloads()
+			expect((await app.request(path, { method: 'HEAD' })).status).toBe(405)
+			expect(mutations).toHaveLength(0)
+		}
+	})
+	test('fails closed when the redirect service is unconfigured', async () => {
+		const { app } = createRoutes({
+			[GET_CONTENT]: addon,
+			[LATEST_RELEASE]: contentRelease,
+		})
+		const response = await app.request(
+			'/addons/dragons/releases/latest/download',
+		)
+		expect(response.status).toBe(503)
+		expect(response.headers.get('Location')).toBeNull()
+	})
+	test('preserves unavailable file errors and rate limit retries', async () => {
+		for (const [result, status] of [
+			[{ ok: false, code: 'FILE_MISSING', message: 'File missing' }, 410],
+			[{ ok: false, code: 'VERSION_PROCESSING', message: 'Processing' }, 409],
+			[
+				new ConvexMutationError(
+					{ code: 'RATE_LIMITED', retryAfterMs: 2500 },
+					'rate limited',
+				),
+				429,
+			],
+			[new ConvexUnavailableError('offline'), 503],
+		] as const) {
+			const { app } = downloads(result)
+			const response = await app.request(
+				'/addons/dragons/releases/latest/download',
+			)
+			expect(response.status).toBe(status)
+			expect(response.headers.get('Cache-Control')).toContain('no-store')
+			expect(response.headers.get('Location')).toBeNull()
+			if (status === 429) expect(response.headers.get('Retry-After')).toBe('3')
+		}
 	})
 })

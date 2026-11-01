@@ -6,7 +6,6 @@ import {
 	parseTimeout,
 	RequestValidationError,
 } from '../lib/request-validation'
-import { inspectServerSoftware } from '../lib/server-software'
 
 const app = new Hono()
 
@@ -28,7 +27,6 @@ app.get('/status', async (c) => {
 				online: false,
 			})
 		}
-		const software = await inspectServerSoftware(host, port, result)
 
 		return c.json({
 			gamemode: result.gamemode ?? '',
@@ -43,15 +41,6 @@ app.get('/status', async (c) => {
 			port: result.port ?? port,
 			protocolVersion: result.protocolVersion ?? 0,
 			serverId: result.serverId ?? '',
-			software: {
-				classification: software.classification,
-				javaEndpoints: software.javaServers.map((server) => ({
-					host: server.host,
-					port: server.port,
-					version: server.versionName ?? '',
-				})),
-				reasons: software.reasons,
-			},
 			version: result.version ?? '',
 		})
 	} catch (error) {

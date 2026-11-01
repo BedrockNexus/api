@@ -16,6 +16,7 @@ const CONTENT_SORTS = [
 	'rating',
 	'saved',
 ]
+const UPDATE_SECTIONS = ['addons', 'resource-packs', 'plugins']
 const RESOLUTIONS = [
 	'8x',
 	'16x',
@@ -132,6 +133,38 @@ function get(
 	}
 }
 
+function downloadRoute() {
+	return {
+		get: {
+			summary: 'Issue a fresh download redirect',
+			description:
+				'Rechecks public availability and counts at most once per requester per release per day. A redirect is not proof of completed transfer. Responses are never cached. HEAD is rejected without counting.',
+			parameters: [contentReference, versionPath],
+			responses: {
+				'307': {
+					description: 'Temporary redirect to the release file',
+					headers: {
+						Location: { schema: string },
+						'Cache-Control': { schema: string },
+					},
+				},
+				...Object.fromEntries(
+					['404', '409', '410', '429', '503'].map((status) => [
+						status,
+						{
+							description:
+								status === '429'
+									? 'Rate limited; see Retry-After'
+									: 'Download unavailable',
+							content: { 'application/json': { schema: ref('Error') } },
+						},
+					]),
+				),
+			},
+		},
+	}
+}
+
 const LIST_ERRORS = ['400', '429', '503']
 const ITEM_ERRORS = ['404', '429', '503']
 
@@ -163,6 +196,7 @@ function contentPaths(
 			[contentReference],
 			ITEM_ERRORS,
 		),
+		[`${path}/{reference}/releases/{version}/download`]: downloadRoute(),
 		[`${path}/{reference}/releases`]: get(
 			`A ${name}'s public releases, newest first`,
 			listOf(ref('ContentRelease')),
@@ -274,7 +308,7 @@ const releaseProperties = {
 	publishedAt: timestamp,
 	sha256: {
 		description:
-			'SHA-256 of the file when known. Currently only plugin releases have one.',
+			'SHA-256 of the file. Verify downloads against it. Null only for add-ons and resource packs released before checksums were recorded.',
 		type: ['string', 'null'],
 	},
 	version: string,
@@ -287,6 +321,11 @@ const serverSummaryProperties = {
 	gameVersions: stringList,
 	id: string,
 	languages: stringList,
+	listed: {
+		description:
+			'False once the server has been offline for 14 days. It is then left out of `/v1/servers`, and returns on its next successful check.',
+		type: 'boolean',
+	},
 	logoUrl: nullableString,
 	name: string,
 	publishedAt: timestamp,
@@ -336,6 +375,38 @@ export const catalogOpenApiDocument = {
 			AddonSummary: object({
 				...contentSummaryProperties,
 				metadata: addonMetadata,
+			}),
+			GameVersion: object({
+				name: {
+					description:
+						'As shown on the site, and what `gameVersion` filters match.',
+					type: 'string',
+				},
+				version: {
+					description: 'The Minecraft version alone, such as `1.26.60`.',
+					type: 'string',
+				},
+			}),
+			Update: object({
+				found: {
+					description:
+						'False if the item does not exist, is not public, or is in another section.',
+					type: 'boolean',
+				},
+				id: string,
+				installedVersion: nullableString,
+				latestVersion: nullableString,
+				release: {
+					description: 'The newest public release, if any.',
+					oneOf: [{ type: 'null' }, object(releaseProperties)],
+				},
+				section: { enum: UPDATE_SECTIONS, type: 'string' },
+				slug: nullableString,
+				updateAvailable: {
+					description:
+						'True if a version was sent and the newest release has a different one.',
+					type: 'boolean',
+				},
 			}),
 			Category: object({
 				description: nullableString,
@@ -451,7 +522,7 @@ export const catalogOpenApiDocument = {
 		'/v1/addon-categories': get('Add-on categories', listOf(ref('Category'))),
 		'/v1/game-versions': get(
 			'Minecraft versions shown in version pickers',
-			listOf(string),
+			listOf(ref('GameVersion')),
 		),
 		'/v1/openapi.json': get('This document', { type: 'object' }, [], ['429']),
 		'/v1/plugin-categories': get(
@@ -480,6 +551,7 @@ export const catalogOpenApiDocument = {
 			[contentReference],
 			ITEM_ERRORS,
 		),
+		'/v1/plugins/{reference}/releases/{version}/download': downloadRoute(),
 		'/v1/plugins/{reference}/releases': get(
 			"A plugin's published releases, newest first (at most 50)",
 			listOf(ref('PluginRelease')),
@@ -524,6 +596,49 @@ export const catalogOpenApiDocument = {
 			],
 			LIST_ERRORS,
 		),
+		'/v1/updates': {
+			post: {
+				requestBody: {
+					content: {
+						'application/json': {
+							schema: object({
+								items: {
+									items: {
+										properties: {
+											id: {
+												description: 'The `id` (preferred) or current `slug`.',
+												type: 'string',
+											},
+											section: { enum: UPDATE_SECTIONS, type: 'string' },
+											version: {
+												description: 'The installed version, if any.',
+												type: 'string',
+											},
+										},
+										required: ['id', 'section'],
+										type: 'object',
+									},
+									maxItems: 100,
+									minItems: 1,
+									type: 'array',
+								},
+							}),
+						},
+					},
+					required: true,
+				},
+				responses: {
+					'200': {
+						content: { 'application/json': { schema: listOf(ref('Update')) } },
+						description: 'One result per item, in request order.',
+					},
+					'400': { $ref: '#/components/responses/400' },
+					'429': { $ref: '#/components/responses/429' },
+					'503': { $ref: '#/components/responses/503' },
+				},
+				summary: 'The newest release of up to 100 installed items',
+			},
+		},
 		'/v1/servers/{reference}': get(
 			'A published server, with its latest status',
 			dataOf(ref('ServerDetail')),

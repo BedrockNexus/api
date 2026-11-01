@@ -6,7 +6,9 @@ import { logger } from 'hono/logger'
 import { rateLimiter } from 'hono-rate-limiter'
 import type { AppConfig } from './config'
 import { loadAppConfig } from './config'
+import { createConvexMutation } from './lib/convex-mutation'
 import { createConvexQuery } from './lib/convex-query'
+import { downloadClientKey } from './lib/download-client'
 import { hasValidApiKey } from './middleware/api-key'
 import { concurrencyLimit } from './middleware/concurrency-limit'
 import { createCatalogRoutes } from './routes/catalog'
@@ -72,7 +74,11 @@ export function createApp(config: AppConfig = loadAppConfig()) {
 	// read it. Registered first because the general policy answers preflights.
 	app.use(
 		'/v1/*',
-		cors({ allowMethods: ['GET', 'OPTIONS'], maxAge: 600, origin: '*' }),
+		cors({
+			allowMethods: ['GET', 'POST', 'OPTIONS'],
+			maxAge: 600,
+			origin: '*',
+		}),
 	)
 	app.use(
 		'*',
@@ -114,6 +120,13 @@ export function createApp(config: AppConfig = loadAppConfig()) {
 	app.route(
 		'/v1',
 		createCatalogRoutes({
+			apiUrl: config.apiUrl,
+			downloadSecret: config.downloadRedirectSecret,
+			mutation: config.convexUrl
+				? createConvexMutation(config.convexUrl)
+				: undefined,
+			clientKey: (headers) =>
+				downloadClientKey(config.downloadRedirectSecret ?? '', headers, config),
 			hubUrl: config.hubUrl,
 			query: config.convexUrl ? createConvexQuery(config.convexUrl) : undefined,
 		}),

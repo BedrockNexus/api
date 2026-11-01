@@ -71,7 +71,11 @@ function manifest(type = 'data') {
 	})
 }
 
-async function withStorage<T>(bytes: Uint8Array, operation: () => Promise<T>) {
+async function withStorage<T>(
+	bytes: Uint8Array,
+	operation: () => Promise<T>,
+	onWholeFileRead?: (init?: RequestInit) => Promise<Response> | undefined,
+) {
 	// Exercise the real ZIP/HTTP range reader, with a deterministic storage response.
 	const fetch = spyOn(globalThis, 'fetch').mockImplementation(
 		async (_url, init) => {
@@ -81,7 +85,10 @@ async function withStorage<T>(bytes: Uint8Array, operation: () => Promise<T>) {
 				'Content-Length': String(bytes.length),
 			}
 			if (init?.method === 'HEAD') return new Response(null, { headers })
-			if (!range) return new Response(bytes.slice(), { headers })
+			if (!range) {
+				const override = await onWholeFileRead?.(init)
+				return override ?? new Response(bytes.slice(), { headers })
+			}
 			const match = /^bytes=(\d*)-(\d*)$/.exec(range)
 			if (!match) return new Response(null, { status: 416 })
 			const start = match[1]
@@ -125,6 +132,96 @@ function validateZip(
 		),
 	)
 }
+
+describe('artifact checksums', () => {
+	async function bundledAddon() {
+		return new Uint8Array(
+			await Bun.file(
+				new URL('./fixtures/nexus-dev-smoke-bundled.mcaddon', import.meta.url),
+			).arrayBuffer(),
+		)
+	}
+
+	function request(bytes: Uint8Array, fileSize = bytes.length) {
+		return validateArtifact(
+			{
+				downloadUrl: 'https://storage.example.test/test',
+				fileName: 'test.mcaddon',
+				fileSize,
+				type: 'addon',
+			},
+			config.artifactAllowedHosts,
+		)
+	}
+
+	test('reports the SHA-256 of the whole file', async () => {
+		const bytes = await bundledAddon()
+		const expected = new Bun.CryptoHasher('sha256').update(bytes).digest('hex')
+
+		const result = await validateZip(bytes)
+
+		expect(result).toMatchObject({ report: { sha256: expected }, valid: true })
+	})
+
+	test('rejects a file larger than declared', async () => {
+		const bytes = await bundledAddon()
+
+		const result = await withStorage(bytes, () =>
+			request(bytes, bytes.length - 1),
+		)
+
+		expect(result).toMatchObject({ code: 'INVALID_FILE_SIZE', valid: false })
+	})
+
+	test('rejects a file smaller than declared', async () => {
+		const bytes = await bundledAddon()
+
+		const result = await withStorage(bytes, () =>
+			request(bytes, bytes.length + 1),
+		)
+
+		expect(result).toMatchObject({ code: 'INVALID_FILE_SIZE', valid: false })
+	})
+
+	test.each([
+		[
+			'the connection fails',
+			() => Promise.reject(new Error('connection reset')),
+		],
+		[
+			'storage answers with an error',
+			() => Promise.resolve(new Response(null, { status: 500 })),
+		],
+	])(
+		'treats it as temporary when %s, so the upload is kept',
+		async (_label, fail) => {
+			const bytes = await bundledAddon()
+
+			const result = await withStorage(bytes, () => request(bytes), fail)
+
+			expect(result).toMatchObject({
+				code: 'VALIDATOR_UNAVAILABLE',
+				valid: false,
+			})
+		},
+	)
+
+	test('does not follow redirects when hashing', async () => {
+		const bytes = await bundledAddon()
+		const redirects: Array<RequestInit['redirect']> = []
+
+		await withStorage(
+			bytes,
+			() => request(bytes),
+			(init) => {
+				redirects.push(init?.redirect)
+				return undefined
+			},
+		)
+
+		expect(redirects).toEqual(['error'])
+	})
+})
 
 describe('pack archives', () => {
 	test('validates the exact 636-byte bundled addon rejected by the live validator', async () => {

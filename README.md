@@ -12,8 +12,6 @@ project artifact validation.
 - Private and reserved network blocking before outbound UDP and TCP traffic
 - Bounded ports, timeouts, concurrency, request bodies, and request rates
 - API-key protection for internal verification routes
-- Conservative detection of default or explicitly branded Geyser responses
-- Java status and SRV correlation for customized Geyser proxies
 - Private validation of Bedrock add-ons and resource packs
 
 ## Setup
@@ -64,12 +62,7 @@ Query parameters:
   "motd": "Welcome to My Server",
   "version": "1.21.80",
   "gamemode": "Survival",
-  "latencyMs": 42,
-  "software": {
-    "classification": "native_bedrock",
-    "javaEndpoints": [],
-    "reasons": ["No Java status endpoint was detected"]
-  }
+  "latencyMs": 42
 }
 ```
 
@@ -86,7 +79,7 @@ Read-only public data from the Hub, for launchers, bots and community sites. No
 key is needed. The full contract is served at `GET /v1/openapi.json`.
 
 The API follows the site's sections. `/addons`, `/resource-packs` and `/plugins`
-each have the same five endpoints:
+each have these endpoints:
 
 | Endpoint | Returns |
 |---|---|
@@ -95,6 +88,7 @@ each have the same five endpoints:
 | `GET /v1/{section}/{reference}/releases` | Public releases, newest first |
 | `GET /v1/{section}/{reference}/releases/latest` | Newest public release |
 | `GET /v1/{section}/{reference}/releases/{version}` | One release by version string |
+| `GET /v1/{section}/{reference}/releases/{version}/download` | Fresh, uncached 307 redirect; accepts `latest` |
 
 The rest cover servers and the values you can filter by:
 
@@ -108,6 +102,7 @@ The rest cover servers and the values you can filter by:
 | `GET /v1/server-categories` | Server gamemodes |
 | `GET /v1/server-software` | Software owners can declare |
 | `GET /v1/game-versions` | Minecraft versions shown in pickers |
+| `POST /v1/updates` | Newest release of up to 100 installed items |
 
 `{reference}` is a stable `id` or a current `slug`; servers also accept their
 address. Store the `id`: slugs can be edited. An item only exists under its own
@@ -130,12 +125,30 @@ answer `404` while the plugin registry is switched off in the Hub's settings.
 - Errors look like `{ "error": { "code": "NOT_FOUND", "message": "..." } }`.
 - Plugin lists filtered by `category`, or by more than one `software`, are not
   paginated and stop at `limit`.
-- Download through a release's `downloadUrl`. It points at the Hub, which applies
+- Download through a release's `downloadUrl`. It points at this API, while Convex applies
   availability rules and redirects to the file. Never store the redirect target.
   `downloadUrl` is `null` when a plugin version has no published file.
-- Verify `sha256` when it is present. Currently only plugin releases have one.
+- Verify downloads against `sha256`. It is `null` only for add-ons and resource
+  packs released before checksums were recorded.
+- Game versions have a `name`, which is what the site shows and `gameVersion`
+  filters match, and a `version` holding just the Minecraft version.
+- A server offline for 14 days is left out of `/v1/servers` and has `listed:
+  false` on its own endpoint. It returns on its next successful check.
 - Only published content is returned. Moderation details, audit fields, storage
   keys and account IDs are left out.
+
+To check installed items for updates in one request, send each item's section,
+`id` and installed version. Results come back in the same order.
+
+```http
+POST /v1/updates
+Content-Type: application/json
+
+{ "items": [{ "section": "plugins", "id": "p_j465gg", "version": "1.1.0" }] }
+```
+
+`updateAvailable` is true when the newest release's version differs from the one
+sent. `found` is false for an item that no longer exists or is not public.
 
 ## Internal Endpoints
 
@@ -235,22 +248,6 @@ your-bucket-id.r2.cloudflarestorage.com
 
 Do not expose the validator endpoint through the public status API service.
 
-## Geyser Detection
-
-[Geyser intentionally builds a normal Bedrock pong](https://github.com/GeyserMC/Geyser/blob/master/core/src/main/java/org/geysermc/geyser/network/netty/GeyserServer.java) and can replace or pass through both MOTD lines. The ping protocol exposes no mandatory Geyser software identifier.
-
-The API combines several signals:
-
-- Geyser default or explicit MOTD branding
-- Java status responses on the same hostname and Bedrock port
-- Java status responses on port `25565`
-- `_minecraft._tcp` SRV targets
-- MOTD similarity
-- Synchronized player counts and matching capacity
-- Java proxy signatures such as Velocity, BungeeCord, and Waterfall
-
-The result is `native_bedrock`, `geyser_likely`, or `ambiguous`. Automatic ownership verification accepts only `native_bedrock`. This catches customized networks such as Complex Gaming without treating every hostname that offers Java Edition as definite Geyser.
-
 ## Environment Variables
 
 | Variable | Description | Default |
@@ -263,7 +260,11 @@ The result is `native_bedrock`, `geyser_likely`, or `ambiguous`. Automatic owner
 | `STATUS_RATE_LIMIT` | Status requests per minute per key | `30` |
 | `CATALOG_RATE_LIMIT` | Catalog requests per minute per key | `120` |
 | `CONVEX_URL` | Hub Convex deployment read by the catalog; `/v1` answers `503` without it | none |
-| `HUB_URL` | Base of catalog links and download URLs | `https://bedrocknexus.com` |
+| `HUB_URL` | Base of catalog website links | `https://bedrocknexus.com` |
+| `API_PUBLIC_URL` | Canonical origin of launcher download URLs | `https://api.bedrocknexus.com` |
+| `DOWNLOAD_REDIRECT_SECRET` | Same server-only value as Hub and Convex; required for downloads | none |
+| `CLIENT_IP_HEADER` | Optional trusted, proxy-overwritten client IP header | none |
+| `TRUSTED_PROXY_HOPS` | Number of trusted rightmost forwarded addresses for downloads | `1` |
 | `MAX_CONCURRENT_STATUS_CHECKS` | Simultaneous status checks per instance | `25` |
 | `MAX_QUEUED_STATUS_CHECKS` | Status requests with the API key that may wait for a free slot; public requests are rejected instead | `1000` |
 | `ARTIFACT_ALLOWED_HOSTS` | Exact comma-separated R2 hosts accepted by the validator worker | none |

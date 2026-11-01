@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, open, rm, rmdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,6 +19,7 @@ export interface ArtifactValidationReport {
 	entryCount?: number
 	totalUncompressedSize?: number
 	manifestCount?: number
+	sha256: string
 }
 
 export type ArtifactValidationResult =
@@ -454,6 +456,46 @@ async function validateArchive(request: ArtifactValidationRequest) {
 	}
 }
 
+/**
+ * Hashes the whole file, which the archive checks only read parts of. A failed
+ * download says nothing about the file, so it is reported as temporary and
+ * retried, while a file that is not the declared size is rejected.
+ */
+async function hashArtifact(request: ArtifactValidationRequest) {
+	const hash = createHash('sha256')
+	let size = 0
+
+	try {
+		const response = await fetch(request.downloadUrl, { redirect: 'error' })
+		if (!(response.ok && response.body)) {
+			throw new Error(`Artifact download returned HTTP ${response.status}`)
+		}
+		const reader = response.body.getReader()
+		while (size <= request.fileSize) {
+			const { done, value } = await reader.read()
+			if (done) {
+				break
+			}
+			size += value.length
+			hash.update(value)
+		}
+		await reader.cancel()
+	} catch {
+		throw new ArtifactValidationError(
+			'The artifact could not be read',
+			'VALIDATOR_UNAVAILABLE',
+		)
+	}
+
+	if (size !== request.fileSize) {
+		throw new ArtifactValidationError(
+			'The artifact is not the declared size',
+			'INVALID_FILE_SIZE',
+		)
+	}
+	return hash.digest('hex')
+}
+
 export async function validateArtifact(
 	request: ArtifactValidationRequest,
 	allowedHosts: readonly string[],
@@ -468,10 +510,12 @@ export async function validateArtifact(
 			)
 		}
 
+		const archive = await validateArchive(request)
 		const report: ArtifactValidationReport = {
 			type: request.type,
 			fileSize: request.fileSize,
-			...(await validateArchive(request)),
+			...archive,
+			sha256: await hashArtifact(request),
 		}
 		return { valid: true, report }
 	} catch (error) {

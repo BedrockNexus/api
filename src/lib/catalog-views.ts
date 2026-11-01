@@ -93,7 +93,8 @@ export interface ContentReleaseDoc {
 	fileName?: string
 	fileSize?: number
 	gameVersions?: string[]
-	project?: { type: string }
+	project?: { type: string; reference?: string }
+	sha256?: string | null
 	version: string
 }
 
@@ -180,6 +181,7 @@ export interface ServerDoc {
 	storeUrl?: string
 	tags?: string[]
 	updatedAt?: number
+	offlineHiddenAt?: number
 	verifiedAt?: number
 	website?: string
 	wikiUrl?: string
@@ -188,6 +190,21 @@ export interface ServerDoc {
 export interface GameVersionDoc {
 	version: string
 }
+
+/** The newest release of one requested item, or null if it cannot be found. */
+export type LatestReleaseDoc = {
+	id: string
+	release: {
+		downloadPath: string | null
+		fileName: string | null
+		fileSize: number | null
+		gameVersions: string[]
+		publishedAt: number | null
+		sha256: string | null
+		version: string
+	} | null
+	slug: string
+} | null
 
 export interface SoftwareDoc {
 	description?: string
@@ -321,20 +338,25 @@ export function toContentDetail(content: ContentDoc, hubUrl: string) {
 	}
 }
 
-/** Downloads stay on Hub's route, which applies availability rules and counts. */
-export function toContentRelease(release: ContentReleaseDoc, hubUrl: string) {
+/** Launcher downloads stay on this API; Convex enforces availability and counting. */
+export function toContentRelease(
+	release: ContentReleaseDoc,
+	apiUrl: string,
+	section: string,
+	reference: string,
+) {
 	return {
 		changelog: release.changelog ?? '',
 		downloads: release.downloads ?? 0,
 		downloadUrl: hubUrlFor(
-			hubUrl,
-			`/api/projects/versions/${encodeURIComponent(release._id)}/download`,
+			apiUrl,
+			`/v1/${section}/${encodeURIComponent(reference)}/releases/${encodeURIComponent(release.version)}/download`,
 		),
 		fileName: release.fileName ?? null,
 		fileSize: release.fileSize ?? null,
 		gameVersions: release.gameVersions ?? [],
 		publishedAt: toTimestamp(release.createdAt),
-		sha256: null,
+		sha256: release.sha256 ?? null,
 		version: release.version,
 	}
 }
@@ -409,7 +431,7 @@ export function toPluginDetail(plugin: PluginDoc, hubUrl: string) {
 export function toPluginRelease(
 	publicId: string,
 	version: PluginVersionDoc,
-	hubUrl: string,
+	apiUrl: string,
 ) {
 	const release = version.release
 	const asset = release?.asset
@@ -420,8 +442,8 @@ export function toPluginRelease(
 		commitSha: release?.commitSha ?? null,
 		downloadUrl: asset
 			? hubUrlFor(
-					hubUrl,
-					`/plugins/${publicId}/download/${encodeURIComponent(version.normalizedVersion)}`,
+					apiUrl,
+					`/v1/plugins/${encodeURIComponent(publicId)}/releases/${encodeURIComponent(version.normalizedVersion)}/download`,
 				)
 			: null,
 		fileName: asset?.name ?? null,
@@ -449,6 +471,7 @@ export function toServerSummary(server: ServerDoc, hubUrl: string) {
 		gameVersions: server.gameVersions ?? [],
 		id: server._id,
 		languages: server.language ?? [],
+		listed: server.offlineHiddenAt === undefined,
 		logoUrl: server.logoUrl ?? null,
 		name: server.name,
 		publishedAt: toTimestamp(server.publishedAt),
@@ -486,6 +509,55 @@ export function toServerDetail(server: ServerDoc, hubUrl: string) {
 		software: server.software
 			? { name: server.software.name, slug: server.software.slug }
 			: null,
+	}
+}
+
+/**
+ * `name` is what the site shows and what filters match, such as
+ * "26.60 (1.26.60)". `version` is just the Minecraft version, for comparing.
+ */
+export function toGameVersionView({ version: name }: GameVersionDoc) {
+	const version = /\(([^()]+)\)\s*$/.exec(name)?.[1] ?? name
+	return { name, version: version.trim() }
+}
+
+export function toUpdateView(
+	item: { id: string; section: string; version?: string },
+	latest: LatestReleaseDoc,
+	apiUrl: string,
+) {
+	const release = latest?.release
+	return {
+		found: latest !== null,
+		id: latest?.id ?? item.id,
+		installedVersion: item.version ?? null,
+		latestVersion: release?.version ?? null,
+		release: release
+			? {
+					downloadUrl: release.downloadPath
+						? hubUrlFor(
+								apiUrl,
+								`/v1/${item.section}/${encodeURIComponent(latest?.id ?? item.id)}/releases/${encodeURIComponent(release.version)}/download`,
+							)
+						: null,
+					fileName: release.fileName,
+					fileSize: release.fileSize,
+					gameVersions: release.gameVersions,
+					publishedAt:
+						release.publishedAt === null
+							? null
+							: toTimestamp(release.publishedAt),
+					sha256: release.sha256,
+					version: release.version,
+				}
+			: null,
+		section: item.section,
+		slug: latest?.slug ?? null,
+		updateAvailable:
+			item.version !== undefined &&
+			release !== null &&
+			release !== undefined &&
+			release.version !== item.version,
 	}
 }
 
