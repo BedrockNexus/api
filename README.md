@@ -75,8 +75,9 @@ the RakNet ping when available, otherwise the TCP connect.
 
 ## Catalog API
 
-Read-only public data from the Hub, for launchers, bots and community sites. No
-key is needed. The full contract is served at `GET /v1/openapi.json`.
+Public catalog data and download redirects for launchers, bots and community
+sites. No caller key is needed; accepted download requests update official Convex
+counts. The full contract is served at `GET /v1/openapi.json`.
 
 The API follows the site's sections. `/addons`, `/resource-packs` and `/plugins`
 each have these endpoints:
@@ -126,7 +127,7 @@ answer `404` while the plugin registry is switched off in the Hub's settings.
 - Plugin lists filtered by `category`, or by more than one `software`, are not
   paginated and stop at `limit`.
 - Download through a release's `downloadUrl`. It points at this API, while Convex applies
-  availability rules and redirects to the file. Never store the redirect target.
+  availability and counting rules; the API redirects to the file. Never store the redirect target.
   `downloadUrl` is `null` when a plugin version has no published file.
 - Verify downloads against `sha256`. It is `null` only for add-ons and resource
   packs released before checksums were recorded.
