@@ -1,11 +1,12 @@
 # BedrockNexus API
 
-A small Bun and Hono service for public Minecraft Bedrock status checks,
-internal server ownership verification, and isolated project artifact
-validation.
+A small Bun and Hono service for public Minecraft Bedrock status checks, a
+read-only public catalog, internal server ownership verification, and isolated
+project artifact validation.
 
 ## Features
 
+- Versioned read-only catalog for launchers, bots and community sites
 - Bedrock status queries over RakNet UDP ping and NetherNet `GET /v1/join`
 - DNS TXT and Bedrock MOTD ownership verification
 - Private and reserved network blocking before outbound UDP and TCP traffic
@@ -78,6 +79,63 @@ A server counts as online if it answers either transport: a RakNet unconnected
 ping over UDP, or NetherNet's `GET /v1/join` over HTTPS or HTTP on TCP. When it
 answers both, NetherNet's values are reported. `latencyMs` is one round trip:
 the RakNet ping when available, otherwise the TCP connect.
+
+## Catalog API
+
+Read-only public data from the Hub, for launchers, bots and community sites. No
+key is needed. The full contract is served at `GET /v1/openapi.json`.
+
+The API follows the site's sections. `/addons`, `/resource-packs` and `/plugins`
+each have the same five endpoints:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /v1/{section}` | Search and browse |
+| `GET /v1/{section}/{reference}` | One item |
+| `GET /v1/{section}/{reference}/releases` | Public releases, newest first |
+| `GET /v1/{section}/{reference}/releases/latest` | Newest public release |
+| `GET /v1/{section}/{reference}/releases/{version}` | One release by version string |
+
+The rest cover servers and the values you can filter by:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /v1/servers` | Search and browse servers |
+| `GET /v1/servers/{reference}` | One server, with its latest status |
+| `GET /v1/addon-categories` | Add-on categories |
+| `GET /v1/resource-pack-categories` | Resource pack categories |
+| `GET /v1/plugin-categories` | Plugin categories |
+| `GET /v1/server-categories` | Server gamemodes |
+| `GET /v1/server-software` | Software owners can declare |
+| `GET /v1/game-versions` | Minecraft versions shown in pickers |
+
+`{reference}` is a stable `id` or a current `slug`; servers also accept their
+address. Store the `id`: slugs can be edited. An item only exists under its own
+section, so a resource pack's ID under `/addons` answers `404`.
+
+Lists take `limit` (1-48, default 24), `cursor`, `q` and `sort`, and filters such
+as `category` can be repeated to match any of several values. Plugin endpoints
+answer `404` while the plugin registry is switched off in the Hub's settings.
+
+```json
+{
+  "data": [{ "id": "k17...", "slug": "my-addon", "name": "My Addon" }],
+  "pagination": { "hasMore": true, "nextCursor": "..." }
+}
+```
+
+- Keep requesting while `hasMore` is true. Filters run after the read, so a page
+  can be short, or empty, while more results remain.
+- Timestamps are ISO 8601 in UTC, and missing optional values are `null`.
+- Errors look like `{ "error": { "code": "NOT_FOUND", "message": "..." } }`.
+- Plugin lists filtered by `category`, or by more than one `software`, are not
+  paginated and stop at `limit`.
+- Download through a release's `downloadUrl`. It points at the Hub, which applies
+  availability rules and redirects to the file. Never store the redirect target.
+  `downloadUrl` is `null` when a plugin version has no published file.
+- Verify `sha256` when it is present. Currently only plugin releases have one.
+- Only published content is returned. Moderation details, audit fields, storage
+  keys and account IDs are left out.
 
 ## Internal Endpoints
 
@@ -203,6 +261,9 @@ The result is `native_bedrock`, `geyser_likely`, or `ambiguous`. Automatic owner
 | `TRUST_PROXY_HEADERS` | Trust proxy-replaced client IP headers | `false` |
 | `GENERAL_RATE_LIMIT` | General requests per minute per key | `60` |
 | `STATUS_RATE_LIMIT` | Status requests per minute per key | `30` |
+| `CATALOG_RATE_LIMIT` | Catalog requests per minute per key | `120` |
+| `CONVEX_URL` | Hub Convex deployment read by the catalog; `/v1` answers `503` without it | none |
+| `HUB_URL` | Base of catalog links and download URLs | `https://bedrocknexus.com` |
 | `MAX_CONCURRENT_STATUS_CHECKS` | Simultaneous status checks per instance | `25` |
 | `MAX_QUEUED_STATUS_CHECKS` | Status requests with the API key that may wait for a free slot; public requests are rejected instead | `1000` |
 | `ARTIFACT_ALLOWED_HOSTS` | Exact comma-separated R2 hosts accepted by the validator worker | none |

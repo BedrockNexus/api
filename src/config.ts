@@ -1,8 +1,11 @@
 export interface AppConfig {
 	apiKey?: string
 	artifactAllowedHosts: string[]
+	catalogRateLimit: number
+	convexUrl?: string
 	corsOrigins: '*' | string[]
 	generalRateLimit: number
+	hubUrl: string
 	maxConcurrentStatusChecks: number
 	maxQueuedStatusChecks: number
 	statusRateLimit: number
@@ -48,8 +51,11 @@ export function loadAppConfig(): AppConfig {
 			process.env.ARTIFACT_ALLOWED_HOSTS?.split(',')
 				.map((host) => host.trim().toLowerCase())
 				.filter(Boolean) ?? [],
+		catalogRateLimit: readPositiveInteger('CATALOG_RATE_LIMIT', 120),
+		convexUrl: process.env.CONVEX_URL?.trim() || undefined,
 		corsOrigins: readCorsOrigins(),
 		generalRateLimit: readPositiveInteger('GENERAL_RATE_LIMIT', 60),
+		hubUrl: process.env.HUB_URL?.trim() || 'https://bedrocknexus.com',
 		maxConcurrentStatusChecks: readPositiveInteger(
 			'MAX_CONCURRENT_STATUS_CHECKS',
 			25,

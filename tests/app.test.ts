@@ -6,8 +6,10 @@ function createTestConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 	return {
 		apiKey: 'test-secret',
 		artifactAllowedHosts: ['storage.example.test'],
+		catalogRateLimit: 10,
 		corsOrigins: ['https://bedrocknexus.test'],
 		generalRateLimit: 10,
+		hubUrl: 'https://hub.example.test',
 		maxConcurrentStatusChecks: 2,
 		maxQueuedStatusChecks: 2,
 		statusRateLimit: 2,
