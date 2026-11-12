@@ -8,6 +8,11 @@ import {
 	HttpRangeReader,
 	ZipReader,
 } from '@zip.js/zip.js'
+import {
+	ArtifactInspection,
+	type ArtifactInspectionReport,
+	BlockedContentError,
+} from './artifact-inspection'
 
 export const ARTIFACT_TYPES = ['addon', 'resource_pack'] as const
 
@@ -20,6 +25,12 @@ export interface ArtifactValidationReport {
 	totalUncompressedSize?: number
 	manifestCount?: number
 	sha256: string
+	/** Which content checks ran: 1 = file list, blocked programs, script findings. */
+	checksVersion?: number
+	files?: ArtifactInspectionReport['files']
+	filesTruncated?: boolean
+	scriptModules?: ArtifactInspectionReport['scriptModules']
+	findings?: ArtifactInspectionReport['findings']
 }
 
 export type ArtifactValidationResult =
@@ -278,6 +289,7 @@ function getModuleTypes(manifest: Record<string, unknown>) {
 async function validatePackArchive(
 	type: ArtifactType,
 	entries: Entry[],
+	inspection: ArtifactInspection,
 	allowEmpty = false,
 ) {
 	const manifests = getManifestEntries(entries)
@@ -303,6 +315,7 @@ async function validatePackArchive(
 		for (const moduleType of getModuleTypes(manifest)) {
 			moduleTypes.add(moduleType)
 		}
+		inspection.addManifest(manifest)
 	}
 	if (type === 'resource_pack' && !moduleTypes.has('resources')) {
 		throw new ArtifactValidationError(
@@ -324,7 +337,11 @@ async function validatePackArchive(
 	return manifests.length
 }
 
-async function validateEmbeddedPack(entry: Entry, budget: ArchiveBudget) {
+async function validateEmbeddedPack(
+	entry: Entry,
+	budget: ArchiveBudget,
+	inspection: ArtifactInspection,
+) {
 	if (entry.directory || entry.uncompressedSize > MAX_EMBEDDED_PACK_SIZE) {
 		throw new ArtifactValidationError(
 			'Embedded packs must not exceed 256 MB',
@@ -387,7 +404,8 @@ async function validateEmbeddedPack(entry: Entry, budget: ArchiveBudget) {
 					'NESTED_PACK_DEPTH',
 				)
 			}
-			return await validatePackArchive('addon', entries)
+			await inspection.inspect(entries, `${entry.filename}/`)
+			return await validatePackArchive('addon', entries, inspection)
 		} finally {
 			await reader.close().catch(() => undefined)
 		}
@@ -408,6 +426,8 @@ async function validateArchive(request: ArtifactValidationRequest) {
 			compressedSize: 0,
 		}
 		const entries = await readEntries(reader, budget)
+		const inspection = new ArtifactInspection()
+		await inspection.inspect(entries)
 		const packs = entries.filter(
 			(entry) => !entry.directory && extensionOf(entry.filename) === 'mcpack',
 		)
@@ -426,17 +446,23 @@ async function validateArchive(request: ArtifactValidationRequest) {
 		let manifestCount = await validatePackArchive(
 			request.type,
 			entries,
+			inspection,
 			packs.length > 0,
 		)
 		for (const pack of packs)
-			manifestCount += await validateEmbeddedPack(pack, budget)
+			manifestCount += await validateEmbeddedPack(pack, budget, inspection)
 		return {
 			entryCount: budget.entryCount,
 			totalUncompressedSize: budget.totalUncompressedSize,
 			manifestCount,
+			checksVersion: 1,
+			...inspection.report(),
 		}
 	} catch (error) {
 		if (error instanceof ArtifactValidationError) throw error
+		if (error instanceof BlockedContentError) {
+			throw new ArtifactValidationError(error.message, error.code)
+		}
 		if (
 			error instanceof Error &&
 			'code' in error &&

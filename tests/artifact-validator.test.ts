@@ -569,3 +569,172 @@ describe('artifact validator', () => {
 		}
 	})
 })
+
+describe('content checks', () => {
+	function scriptManifest(modules: { module_name: string; version: string }[]) {
+		return JSON.stringify({
+			format_version: 2,
+			header: {
+				name: 'Script pack',
+				uuid: 'b1f0c1d2-7a3e-4c2f-9a8b-1c2d3e4f5a6b',
+				version: [1, 0, 0],
+				min_engine_version: [1, 21, 0],
+			},
+			modules: [
+				{
+					type: 'script',
+					language: 'javascript',
+					entry: 'scripts/main.js',
+					uuid: 'c2e1d0f3-8b4a-4d3e-8f9a-2d3e4f5a6b7c',
+					version: [1, 0, 0],
+				},
+			],
+			dependencies: modules,
+		})
+	}
+
+	test('lists every file with its size and checksum, embedded packs under their name', async () => {
+		const pack = await zip([
+			{ name: 'manifest.json', data: manifest() },
+			{ name: 'functions/hello.mcfunction', data: 'say hello' },
+		])
+		const result = await validateZip(
+			await zip([
+				{ name: 'behavior.mcpack', data: pack },
+				{ name: 'LICENSE', data: 'MIT' },
+			]),
+		)
+
+		expect(result.valid).toBe(true)
+		if (!result.valid) return
+		expect(result.report.checksVersion).toBe(1)
+		expect(result.report.filesTruncated).toBe(false)
+		expect(result.report.files?.map((file) => file.path).sort()).toEqual([
+			'LICENSE',
+			'behavior.mcpack/functions/hello.mcfunction',
+			'behavior.mcpack/manifest.json',
+		])
+		const hello = result.report.files?.find((file) =>
+			file.path.endsWith('hello.mcfunction'),
+		)
+		expect(hello?.size).toBe(9)
+		expect(hello?.crc32).toBeGreaterThan(0)
+		expect(result.report.findings).toEqual([])
+	})
+
+	test('rejects programs by their name', async () => {
+		const result = await validateZip(
+			await zip([
+				{ name: 'manifest.json', data: manifest() },
+				{ name: 'Setup.exe', data: 'anything' },
+			]),
+		)
+
+		expect(result).toMatchObject({ code: 'BLOCKED_FILE_TYPE', valid: false })
+	})
+
+	test('rejects programs inside an embedded pack', async () => {
+		const pack = await zip([
+			{ name: 'manifest.json', data: manifest() },
+			{ name: 'tools/run.bat', data: 'echo hi' },
+		])
+		const result = await validateZip(
+			await zip([{ name: 'behavior.mcpack', data: pack }]),
+		)
+
+		expect(result).toMatchObject({ code: 'BLOCKED_FILE_TYPE', valid: false })
+	})
+
+	test.each([
+		['a Windows program', new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03])],
+		['a Linux program', new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 0x02])],
+		['a shell script', new TextEncoder().encode('#!/bin/sh\nrm -rf ~')],
+	])('rejects %s under another name', async (_label, data) => {
+		const result = await validateZip(
+			await zip([
+				{ name: 'manifest.json', data: manifest() },
+				{ name: 'notes.dat', data },
+			]),
+		)
+
+		expect(result).toMatchObject({
+			code: 'EXECUTABLE_CONTENT',
+			valid: false,
+		})
+	})
+
+	test('reports script modules and warns about network and admin access', async () => {
+		const result = await validateZip(
+			await zip([
+				{
+					name: 'manifest.json',
+					data: scriptManifest([
+						{ module_name: '@minecraft/server', version: '1.15.0' },
+						{ module_name: '@minecraft/server-net', version: '1.0.0-beta' },
+					]),
+				},
+				{
+					name: 'scripts/main.js',
+					data: 'import { world } from "@minecraft/server"',
+				},
+			]),
+		)
+
+		expect(result.valid).toBe(true)
+		if (!result.valid) return
+		expect(result.report.scriptModules).toEqual([
+			{ name: '@minecraft/server', version: '1.15.0' },
+			{ name: '@minecraft/server-net', version: '1.0.0-beta' },
+		])
+		expect(result.report.findings).toEqual([
+			expect.objectContaining({ code: 'NETWORK_MODULE', level: 'warning' }),
+		])
+	})
+
+	test('flags obfuscated scripts and code built at runtime', async () => {
+		const obfuscated = Array.from(
+			{ length: 30 },
+			(_, index) => `var _0x${(0xa000 + index).toString(16)}=1;`,
+		).join('\n')
+		const result = await validateZip(
+			await zip([
+				{ name: 'manifest.json', data: scriptManifest([]) },
+				{ name: 'scripts/main.js', data: obfuscated },
+				{ name: 'scripts/loader.js', data: 'eval(atob(payload))' },
+			]),
+		)
+
+		expect(result.valid).toBe(true)
+		if (!result.valid) return
+		expect(result.report.findings).toEqual([
+			expect.objectContaining({
+				code: 'OBFUSCATED_SCRIPT',
+				paths: ['scripts/main.js'],
+			}),
+			expect.objectContaining({
+				code: 'DYNAMIC_CODE',
+				paths: ['scripts/loader.js'],
+			}),
+		])
+	})
+
+	test('notes files Minecraft does not use, but accepts them', async () => {
+		const result = await validateZip(
+			await zip([
+				{ name: 'manifest.json', data: manifest() },
+				{ name: 'models/chair.bbmodel', data: '{}' },
+				{ name: 'README', data: 'Read me' },
+			]),
+		)
+
+		expect(result.valid).toBe(true)
+		if (!result.valid) return
+		expect(result.report.findings).toEqual([
+			expect.objectContaining({
+				code: 'UNUSUAL_FILES',
+				level: 'info',
+				message: 'Files Minecraft does not use: .bbmodel (1).',
+			}),
+		])
+	})
+})

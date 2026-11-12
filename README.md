@@ -223,6 +223,21 @@ include embedded entries, and expanded-size totals include the container bytes
 processed to inspect them. Manifest reads are capped at 1 MB and extracted
 pack/manifest checksums are verified.
 
+Programs and system scripts are rejected: `BLOCKED_FILE_TYPE` for names such
+as `.exe`, `.dll`, `.bat`, `.ps1`, `.lnk` or `.jar`, and `EXECUTABLE_CONTENT`
+for a file Minecraft does not use whose first bytes are a Windows, Linux or
+macOS program or an interpreter line (`#!`). Valid reports (`checksVersion: 1`)
+also carry what moderators review:
+
+- `files`: every file's path, uncompressed size and CRC32, up to 5,000
+  (`filesTruncated` beyond that). Files inside an embedded pack are listed
+  under the pack's name, such as `behavior.mcpack/manifest.json`.
+- `scriptModules`: the modules the manifests depend on.
+- `findings`: warnings for `@minecraft/server-net` and `@minecraft/server-admin`,
+  obfuscated scripts and code built at runtime (`eval`, `new Function`), and
+  notes for minified scripts and files Minecraft does not use. Findings never
+  reject a file.
+
 Temporary storage failures return HTTP 503 with `VALIDATOR_UNAVAILABLE` so
 Convex retries validation instead of deleting an artifact as malformed.
 
