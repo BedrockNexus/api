@@ -33,8 +33,12 @@ export interface BedrockServerInfo {
 	online: boolean
 	playerCount?: number
 	port?: number
+	/** The IPv6 port a RakNet server advertises. */
+	portV6?: number
 	protocolVersion?: number
 	serverId?: string
+	/** Which ways of connecting answered; newer clients use NetherNet only. */
+	transports?: { nethernet: boolean; raknet: boolean }
 	version?: string
 }
 
@@ -94,6 +98,7 @@ export function parseBedrockPong(
 		online: true,
 		playerCount: parseNumber(parts[4]) ?? 0,
 		port: parseNumber(parts[10]),
+		portV6: parseNumber(parts[11]),
 		protocolVersion: parseNumber(parts[2]),
 		serverId: parts[6],
 		version: parts[3],
@@ -422,7 +427,16 @@ export async function probeBedrockTarget(
 	clearTimeout(graceTimer)
 
 	const result = mergeTransportResults(raknetResult, nethernetResult)
-	return result ? { ...result, port: result.port ?? port } : { online: false }
+	return result
+		? {
+				...result,
+				port: result.port ?? port,
+				transports: {
+					nethernet: Boolean(nethernetResult),
+					raknet: Boolean(raknetResult),
+				},
+			}
+		: { online: false }
 }
 
 export async function pingBedrockServer(

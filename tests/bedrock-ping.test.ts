@@ -48,6 +48,7 @@ describe('Bedrock pong parsing', () => {
 			online: true,
 			playerCount: 12,
 			port: 19_132,
+			portV6: 19_133,
 			protocolVersion: 827,
 			serverId: 'server-id',
 			version: '1.21.80',
@@ -353,6 +354,7 @@ describe('probing a server', () => {
 			online: true,
 			playerCount: 1,
 			port,
+			transports: { nethernet: true, raknet: false },
 		})
 	})
 
@@ -364,6 +366,7 @@ describe('probing a server', () => {
 			online: true,
 			playerCount: 2,
 			port,
+			transports: { nethernet: false, raknet: true },
 		})
 	})
 
@@ -377,6 +380,7 @@ describe('probing a server', () => {
 			motd: 'Halloween',
 			online: true,
 			serverId: 'id',
+			transports: { nethernet: true, raknet: true },
 		})
 		expect(performance.now() - startedAt).toBeLessThan(2000)
 	})

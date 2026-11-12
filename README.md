@@ -62,9 +62,15 @@ Query parameters:
   "motd": "Welcome to My Server",
   "version": "1.21.80",
   "gamemode": "Survival",
-  "latencyMs": 42
+  "latencyMs": 42,
+  "transports": { "nethernet": true, "raknet": true }
 }
 ```
+
+`transports` says which ways of connecting answered. Bedrock 26.60 and later
+clients connect over NetherNet only, so a server answering only RakNet looks
+offline to them. `motd` and `mapName` keep their `§` formatting codes; `portV6`
+is the IPv6 port a RakNet server advertises, when it does.
 
 Private, loopback, link-local, reserved, and mixed public/private DNS targets are rejected.
 

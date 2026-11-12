@@ -39,8 +39,10 @@ app.get('/status', async (c) => {
 				online: result.playerCount ?? 0,
 			},
 			port: result.port ?? port,
+			portV6: result.portV6,
 			protocolVersion: result.protocolVersion ?? 0,
 			serverId: result.serverId ?? '',
+			transports: result.transports,
 			version: result.version ?? '',
 		})
 	} catch (error) {
