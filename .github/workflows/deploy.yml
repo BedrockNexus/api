@@ -1,0 +1,40 @@
+name: Deploy
+
+# Builds the API and validator images in GitHub Actions, pushes them to GHCR
+# and triggers Coolify, which only pulls them. Coolify must not build this
+# repository from source: two builds at once ran the server out of memory.
+# Pipeline: https://github.com/BedrockNexus/github-actions
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  api:
+    uses: BedrockNexus/github-actions/.github/workflows/docker-deploy.yml@main
+    with:
+      target: runner
+      test-target: test
+      environment: production-api
+    secrets:
+      COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK }}
+      COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+
+  # After the API, so the tests have passed and the server restarts one
+  # service at a time.
+  validator:
+    needs: api
+    uses: BedrockNexus/github-actions/.github/workflows/docker-deploy.yml@main
+    with:
+      target: validator
+      image-name: ghcr.io/bedrocknexus/api-validator
+      environment: production-validator
+    secrets:
+      COOLIFY_WEBHOOK: ${{ secrets.COOLIFY_WEBHOOK_WORKER }}
+      COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}

@@ -249,16 +249,20 @@ Convex retries validation instead of deleting an artifact as malformed.
 
 ## Deployment
 
-Coolify builds and deploys the API from source with Railpack on pushes to
-`main`. `Quality` runs lint, typecheck and tests on pull requests and `main`.
+Pushes to `main` run `Deploy`: GitHub Actions builds the Dockerfile's `test`
+stage, then two images, and pushes them to GHCR:
+
+- `ghcr.io/bedrocknexus/api` (stage `runner`), the public API;
+- `ghcr.io/bedrocknexus/api-validator` (stage `validator`), the artifact
+  validator: the same code, started with `src/worker.ts`.
+
+Each then triggers its Coolify application through `COOLIFY_WEBHOOK` and
+`COOLIFY_WEBHOOK_WORKER`, the validator after the API. Both applications are
+*Docker Image* deployments: Coolify only pulls, and must not build this
+repository from source, since two builds at once run the server out of
+memory. `Quality` runs lint, typecheck and tests on pull requests and `main`.
 
 ## Validator Deployment
-
-Deploy the same image as a second service and override its command:
-
-```bash
-bun run start:worker
-```
 
 Set `PORT` to the service port, use the same `API_SECRET_KEY` as Convex, and set
 `ARTIFACT_ALLOWED_HOSTS` to the exact hostname used by your R2 signed URLs, for

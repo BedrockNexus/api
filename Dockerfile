@@ -43,3 +43,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:3001/health || exit 1
 
 CMD ["bun", "--bun", "run", "src/index.ts"]
+
+# The artifact validator: the same code and dependencies, started as the
+# worker. Built as its own image (ghcr.io/bedrocknexus/api-validator).
+FROM runner AS validator
+
+CMD ["bun", "--bun", "run", "src/worker.ts"]
