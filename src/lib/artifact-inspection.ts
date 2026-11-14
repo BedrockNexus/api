@@ -26,11 +26,61 @@ export interface ScriptModule {
 	version?: string
 }
 
+export type PackKind = 'behavior' | 'resources' | 'skins' | 'world' | 'other'
+
+/** A pack's identity from its manifest header. */
+export interface PackIdentity {
+	uuid: string
+	version?: string
+	kind: PackKind
+	minEngineVersion?: string
+}
+
+/** A pack another pack in the archive needs, by UUID. */
+export interface PackDependency {
+	uuid: string
+	version?: string
+}
+
 export interface ArtifactInspectionReport {
 	files: ArtifactFile[]
 	filesTruncated: boolean
 	scriptModules: ScriptModule[]
 	findings: ArtifactFinding[]
+	packs: PackIdentity[]
+	packDependencies: PackDependency[]
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const MAX_PACK_IDENTITIES = 64
+
+function packUuid(value: unknown) {
+	const text = typeof value === 'string' ? value.trim().toLowerCase() : ''
+	return UUID.test(text) ? text : undefined
+}
+
+/** `[1, 21, 0]` or `"1.21.0"` as `"1.21.0"`; anything else undefined. */
+function versionLabel(value: unknown) {
+	if (typeof value === 'string' && value.trim()) {
+		return value.trim().slice(0, 40)
+	}
+	if (
+		Array.isArray(value) &&
+		value.length > 0 &&
+		value.every((part) => Number.isInteger(part) && part >= 0)
+	) {
+		return value.join('.').slice(0, 40)
+	}
+	return undefined
+}
+
+function packKind(moduleTypes: string[]): PackKind {
+	if (moduleTypes.includes('data') || moduleTypes.includes('script'))
+		return 'behavior'
+	if (moduleTypes.includes('resources')) return 'resources'
+	if (moduleTypes.includes('skin_pack')) return 'skins'
+	if (moduleTypes.includes('world_template')) return 'world'
+	return 'other'
 }
 
 /** Files Bedrock reads from a behavior or resource pack. */
@@ -235,6 +285,8 @@ export class ArtifactInspection {
 	private readonly files: ArtifactFile[] = []
 	private filesTruncated = false
 	private readonly modules = new Map<string, string | undefined>()
+	private readonly packs = new Map<string, PackIdentity>()
+	private readonly dependsOn = new Map<string, string | undefined>()
 	private readonly unusual = new Map<string, string[]>()
 	private readonly flagged = new Map<string, string[]>()
 	private sniffed = 0
@@ -280,13 +332,54 @@ export class ArtifactInspection {
 		for (const entry of scripts) await this.scan(entry, prefix)
 	}
 
-	/** Records the script modules a manifest depends on. */
+	/**
+	 * Records a manifest's pack identity, the packs it depends on by UUID,
+	 * and the script modules it depends on.
+	 */
 	addManifest(manifest: Record<string, unknown>) {
+		const header =
+			manifest.header && typeof manifest.header === 'object'
+				? (manifest.header as Record<string, unknown>)
+				: {}
+		const uuid = packUuid(header.uuid)
+		if (
+			uuid &&
+			!this.packs.has(uuid) &&
+			this.packs.size < MAX_PACK_IDENTITIES
+		) {
+			const modules = Array.isArray(manifest.modules) ? manifest.modules : []
+			const moduleTypes = modules.flatMap((module) =>
+				module &&
+				typeof module === 'object' &&
+				typeof (module as Record<string, unknown>).type === 'string'
+					? [(module as Record<string, unknown>).type as string]
+					: [],
+			)
+			const version = versionLabel(header.version)
+			const minEngineVersion = versionLabel(header.min_engine_version)
+			this.packs.set(uuid, {
+				uuid,
+				kind: packKind(moduleTypes),
+				...(version ? { version } : {}),
+				...(minEngineVersion ? { minEngineVersion } : {}),
+			})
+		}
 		const dependencies = Array.isArray(manifest.dependencies)
 			? manifest.dependencies
 			: []
 		for (const dependency of dependencies) {
 			if (!dependency || typeof dependency !== 'object') continue
+			const dependencyUuid = packUuid(
+				(dependency as Record<string, unknown>).uuid,
+			)
+			if (dependencyUuid) {
+				if (this.dependsOn.size < MAX_PACK_IDENTITIES)
+					this.dependsOn.set(
+						dependencyUuid,
+						versionLabel((dependency as Record<string, unknown>).version),
+					)
+				continue
+			}
 			const { module_name: name, version } = dependency as Record<
 				string,
 				unknown
@@ -368,6 +461,11 @@ export class ArtifactInspection {
 				version ? { name, version } : { name },
 			),
 			findings,
+			packs: [...this.packs.values()],
+			// Packs in the same archive satisfy each other.
+			packDependencies: [...this.dependsOn.entries()]
+				.filter(([uuid]) => !this.packs.has(uuid))
+				.map(([uuid, version]) => (version ? { uuid, version } : { uuid })),
 		}
 	}
 

@@ -265,6 +265,80 @@ describe('pack archives', () => {
 		})
 	})
 
+	test('reports pack identities and the packs a bundle still needs', async () => {
+		const library = '5f3c1b2a-1d2e-4f3a-9b8c-7d6e5f4a3b2c'
+		const behavior = JSON.stringify({
+			format_version: 2,
+			header: {
+				name: 'Behavior',
+				uuid: 'D325699C-A583-4BC4-8B9B-1FA8EF81C022',
+				version: [2, 1, 0],
+				min_engine_version: [1, 21, 50],
+			},
+			modules: [
+				{
+					type: 'data',
+					uuid: '0830a2d2-af2b-4cc9-aeeb-48f8c8406506',
+					version: [1, 0, 0],
+				},
+			],
+			dependencies: [
+				// The resource pack in the same bundle: satisfied, not reported.
+				{ uuid: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', version: [2, 1, 0] },
+				{ uuid: library, version: [1, 0, 0] },
+				{ module_name: '@minecraft/server', version: '1.15.0' },
+			],
+		})
+		const resources = JSON.stringify({
+			format_version: 2,
+			header: {
+				name: 'Resources',
+				uuid: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+				version: '2.1.0',
+				min_engine_version: [1, 20, 80],
+			},
+			modules: [
+				{
+					type: 'resources',
+					uuid: '9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b',
+					version: [1, 0, 0],
+				},
+			],
+		})
+		const bundle = await zip([
+			{
+				name: 'bp.mcpack',
+				data: await zip([{ name: 'manifest.json', data: behavior }]),
+			},
+			{
+				name: 'rp.mcpack',
+				data: await zip([{ name: 'manifest.json', data: resources }]),
+			},
+		])
+		const result = await validateZip(bundle)
+		expect(result).toMatchObject({
+			valid: true,
+			report: {
+				packs: [
+					{
+						uuid: 'd325699c-a583-4bc4-8b9b-1fa8ef81c022',
+						kind: 'behavior',
+						version: '2.1.0',
+						minEngineVersion: '1.21.50',
+					},
+					{
+						uuid: 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d',
+						kind: 'resources',
+						version: '2.1.0',
+						minEngineVersion: '1.20.80',
+					},
+				],
+				packDependencies: [{ uuid: library, version: '1.0.0' }],
+				scriptModules: [{ name: '@minecraft/server', version: '1.15.0' }],
+			},
+		})
+	})
+
 	test('preserves unpacked addon and direct resource-pack validation', async () => {
 		expect(
 			await validateZip(

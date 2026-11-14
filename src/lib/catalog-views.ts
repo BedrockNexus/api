@@ -55,6 +55,7 @@ export interface ContentDoc {
 	discordUrl?: string
 	donationUrl?: string
 	favouriteCount?: number
+	followerCount?: number
 	iconUrl?: string | null
 	issueTrackerUrl?: string
 	latestVersion?: {
@@ -95,6 +96,8 @@ export interface ContentReleaseDoc {
 	gameVersions?: string[]
 	project?: { type: string; reference?: string }
 	sha256?: string | null
+	minEngineVersion?: string
+	breakingChanges?: boolean
 	version: string
 }
 
@@ -162,6 +165,7 @@ export interface ServerDoc {
 	description?: string
 	discordUrl?: string
 	favouriteCount?: number
+	followerCount?: number
 	gameVersions?: string[]
 	ipAddress: string
 	language?: string[]
@@ -192,6 +196,16 @@ export interface GameVersionDoc {
 }
 
 /** The newest release of one requested item, or null if it cannot be found. */
+export interface DependencyDoc {
+	kind: 'required' | 'optional' | 'incompatible'
+	source: 'creator' | 'manifest'
+	listing: { section: string; id: string } | null
+	name: string | null
+	url: string | null
+	packUuid: string | null
+	packVersion: string | null
+}
+
 export type LatestReleaseDoc = {
 	id: string
 	release: {
@@ -199,11 +213,21 @@ export type LatestReleaseDoc = {
 		fileName: string | null
 		fileSize: number | null
 		gameVersions: string[]
+		minEngineVersion?: string | null
+		breakingChanges?: boolean
+		dependencies?: DependencyDoc[]
 		publishedAt: number | null
 		sha256: string | null
 		version: string
 	} | null
 	slug: string
+} | null
+
+export type PackLookupDoc = {
+	section: string
+	id: string
+	slug: string
+	name: string
 } | null
 
 export interface SoftwareDoc {
@@ -302,7 +326,9 @@ export function toContentSummary(content: ContentDoc, hubUrl: string) {
 		stats: {
 			averageRating: content.averageRating ?? 0,
 			downloads: content.totalDownloads ?? 0,
-			favourites: content.favouriteCount ?? 0,
+			// `favourites` is the older name; both now count followers.
+			favourites: content.followerCount ?? content.favouriteCount ?? 0,
+			followers: content.followerCount ?? content.favouriteCount ?? 0,
 			reviews: content.reviewCount ?? 0,
 		},
 		summary: content.summary,
@@ -355,6 +381,8 @@ export function toContentRelease(
 		fileName: release.fileName ?? null,
 		fileSize: release.fileSize ?? null,
 		gameVersions: release.gameVersions ?? [],
+		minEngineVersion: release.minEngineVersion ?? null,
+		breakingChanges: release.breakingChanges ?? false,
 		publishedAt: toTimestamp(release.createdAt),
 		sha256: release.sha256 ?? null,
 		version: release.version,
@@ -479,7 +507,8 @@ export function toServerSummary(server: ServerDoc, hubUrl: string) {
 		slug: server.slug,
 		stats: {
 			averageRating: server.averageRating ?? 0,
-			favourites: server.favouriteCount ?? 0,
+			favourites: server.followerCount ?? server.favouriteCount ?? 0,
+			followers: server.followerCount ?? server.favouriteCount ?? 0,
 			reviews: server.reviewCount ?? 0,
 		},
 		status: {
@@ -543,6 +572,18 @@ export function toUpdateView(
 					fileName: release.fileName,
 					fileSize: release.fileSize,
 					gameVersions: release.gameVersions,
+					minEngineVersion: release.minEngineVersion ?? null,
+					breakingChanges: release.breakingChanges ?? false,
+					dependencies: (release.dependencies ?? []).map((dependency) => ({
+						kind: dependency.kind,
+						source: dependency.source,
+						section: dependency.listing?.section ?? null,
+						id: dependency.listing?.id ?? null,
+						name: dependency.name,
+						url: dependency.url,
+						packUuid: dependency.packUuid,
+						packVersion: dependency.packVersion,
+					})),
 					publishedAt:
 						release.publishedAt === null
 							? null
@@ -558,6 +599,30 @@ export function toUpdateView(
 			release !== null &&
 			release !== undefined &&
 			release.version !== item.version,
+	}
+}
+
+export function toPackLookupView(
+	uuid: string,
+	pack: PackLookupDoc,
+	hubUrl: string,
+) {
+	return {
+		uuid,
+		found: pack !== null,
+		section: pack?.section ?? null,
+		id: pack?.id ?? null,
+		slug: pack?.slug ?? null,
+		name: pack?.name ?? null,
+		url: pack
+			? hubUrlFor(
+					hubUrl,
+					contentPagePath(
+						pack.section === 'addons' ? 'addon' : 'resource_pack',
+						pack.id,
+					),
+				)
+			: null,
 	}
 }
 

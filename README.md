@@ -110,6 +110,7 @@ The rest cover servers and the values you can filter by:
 | `GET /v1/server-software` | Software owners can declare |
 | `GET /v1/game-versions` | Minecraft versions shown in pickers |
 | `POST /v1/updates` | Newest release of up to 100 installed items |
+| `POST /v1/packs/lookup` | Which listings up to 100 installed packs came from |
 
 `{reference}` is a stable `id` or a current `slug`; servers also accept their
 address. Store the `id`: slugs can be edited. An item only exists under its own
@@ -156,6 +157,25 @@ Content-Type: application/json
 
 `updateAvailable` is true when the newest release's version differs from the one
 sent. `found` is false for an item that no longer exists or is not public.
+Each update's release also has `minEngineVersion` (read from the pack
+manifests), `breakingChanges` (declared by the publisher) and `dependencies`.
+A dependency is a BedrockNexus listing (`section` and `id`), an external `name`
+and `url`, or a `packUuid` no public listing contains. `source` says whether it
+came from the manifest or the publisher.
+
+To recognise packs already installed on a device, send their manifest header
+UUIDs. A UUID belongs to the listing that published it first, so a re-upload
+of someone else's pack never takes it over.
+
+```http
+POST /v1/packs/lookup
+Content-Type: application/json
+
+{ "uuids": ["d325699c-a583-4bc4-8b9b-1fa8ef81c022"] }
+```
+
+`stats.followers` counts public follows; `stats.favourites` is its older name
+and holds the same number.
 
 ## Internal Endpoints
 
@@ -239,6 +259,11 @@ also carry what moderators review:
   (`filesTruncated` beyond that). Files inside an embedded pack are listed
   under the pack's name, such as `behavior.mcpack/manifest.json`.
 - `scriptModules`: the modules the manifests depend on.
+- `packs`: each manifest's header UUID (lower case), version, kind
+  (`behavior`, `resources`, `skins`, `world` or `other`) and
+  `min_engine_version`, up to 64.
+- `packDependencies`: pack UUIDs the manifests depend on that the upload does
+  not contain itself.
 - `findings`: warnings for `@minecraft/server-net` and `@minecraft/server-admin`,
   obfuscated scripts and code built at runtime (`eval`, `new Function`), and
   notes for minified scripts and files Minecraft does not use. Findings never

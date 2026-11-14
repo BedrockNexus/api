@@ -356,6 +356,8 @@ describe.each([
 				fileName: 'dragons.mcaddon',
 				fileSize: 10,
 				gameVersions: ['1.26.60'],
+				minEngineVersion: null,
+				breakingChanges: false,
 				publishedAt: '2023-11-14T22:13:20.000Z',
 				sha256: null,
 				version: '1.0.0',
@@ -950,6 +952,9 @@ describe('catalog /updates', () => {
 				fileName: 'Economy.phar',
 				fileSize: 20,
 				gameVersions: ['1.26.60'],
+				minEngineVersion: null,
+				breakingChanges: false,
+				dependencies: [],
 				publishedAt: '2023-11-14T22:13:20.000Z',
 				sha256: 'abc123',
 				version: 'v1.1.0',
@@ -1474,5 +1479,72 @@ describe('catalog download redirects', () => {
 			expect(response.headers.get('Location')).toBeNull()
 			if (status === 429) expect(response.headers.get('Retry-After')).toBe('3')
 		}
+	})
+})
+
+describe('catalog /packs/lookup', () => {
+	const LOOKUP = 'functions/site/releases:lookupPacks'
+
+	function post(app: ReturnType<typeof createCatalogRoutes>, body: unknown) {
+		return app.request('/packs/lookup', {
+			body: JSON.stringify(body),
+			headers: { 'Content-Type': 'application/json' },
+			method: 'POST',
+		})
+	}
+
+	test('maps pack UUIDs to listings in request order', async () => {
+		const { app, calls } = createRoutes({
+			[LOOKUP]: [
+				{ section: 'addons', id: 'abc', slug: 'dragons', name: 'Dragons' },
+				null,
+			],
+		})
+		const response = await post(app, {
+			uuids: [
+				'D325699C-A583-4BC4-8B9B-1FA8EF81C022',
+				'5f3c1b2a-1d2e-4f3a-9b8c-7d6e5f4a3b2c',
+			],
+		})
+		expect(response.status).toBe(200)
+		expect(calls).toEqual([
+			{
+				path: LOOKUP,
+				args: {
+					uuids: [
+						'd325699c-a583-4bc4-8b9b-1fa8ef81c022',
+						'5f3c1b2a-1d2e-4f3a-9b8c-7d6e5f4a3b2c',
+					],
+				},
+			},
+		])
+		expect((await response.json()).data).toEqual([
+			{
+				uuid: 'd325699c-a583-4bc4-8b9b-1fa8ef81c022',
+				found: true,
+				section: 'addons',
+				id: 'abc',
+				slug: 'dragons',
+				name: 'Dragons',
+				url: `${HUB_URL}/addons/a_abc`,
+			},
+			{
+				uuid: '5f3c1b2a-1d2e-4f3a-9b8c-7d6e5f4a3b2c',
+				found: false,
+				section: null,
+				id: null,
+				slug: null,
+				name: null,
+				url: null,
+			},
+		])
+	})
+
+	test('rejects anything that is not a pack UUID', async () => {
+		const { app, calls } = createRoutes({})
+		for (const body of [{}, { uuids: [] }, { uuids: ['nope'] }]) {
+			expect((await post(app, body)).status).toBe(400)
+		}
+		expect(calls).toEqual([])
 	})
 })

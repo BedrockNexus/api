@@ -8,6 +8,7 @@ import {
 	type ContentReleaseDoc,
 	type GameVersionDoc,
 	type LatestReleaseDoc,
+	type PackLookupDoc,
 	type PluginCardDoc,
 	type PluginDoc,
 	type ServerDoc,
@@ -18,6 +19,7 @@ import {
 	toContentSummary,
 	toContentType,
 	toGameVersionView,
+	toPackLookupView,
 	toPluginDetail,
 	toPluginRelease,
 	toPluginSummary,
@@ -73,6 +75,9 @@ const UPDATE_SECTIONS = ['addons', 'resource-packs', 'plugins'] as const
 const MAX_UPDATE_ITEMS = 100
 const MAX_UPDATE_BODY_BYTES = 64 * 1024
 const MAX_VERSION_LENGTH = 100
+const MAX_PACK_LOOKUPS = 100
+const PACK_UUID =
+	/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
 /** Add-ons and resource packs share Hub's queries but are separate sections. */
 const CONTENT_SECTIONS = [
@@ -100,6 +105,7 @@ const QUERIES = {
 	features: 'functions/site/settings:getFeatures',
 	gameVersions: 'functions/site/gameVersions:listActive',
 	latestReleases: 'functions/site/releases:latest',
+	packLookup: 'functions/site/releases:lookupPacks',
 	pluginBrowse: 'functions/plugins/catalog:explore',
 	pluginCategories: 'functions/plugins/categories:list',
 	pluginGet: 'functions/plugins/catalog:getProject',
@@ -249,6 +255,25 @@ function readUpdateItems(body: unknown): UpdateItem[] {
 			section: section as UpdateItem['section'],
 			version: version as string | undefined,
 		}
+	})
+}
+
+function readPackUuids(body: unknown): string[] {
+	const uuids = (body as { uuids?: unknown } | null)?.uuids
+	if (!Array.isArray(uuids) || uuids.length === 0) {
+		throw invalidParameter('uuids', 'must be a non-empty array')
+	}
+	if (uuids.length > MAX_PACK_LOOKUPS) {
+		throw invalidParameter(
+			'uuids',
+			`accepts at most ${MAX_PACK_LOOKUPS} entries`,
+		)
+	}
+	return uuids.map((uuid: unknown, index) => {
+		if (typeof uuid !== 'string' || !PACK_UUID.test(uuid)) {
+			throw invalidParameter(`uuids[${index}]`, 'must be a pack header UUID')
+		}
+		return uuid.toLowerCase()
 	})
 }
 
@@ -740,6 +765,29 @@ export function createCatalogRoutes(options: {
 			return c.json({
 				data: items.map((item, index) =>
 					toUpdateView(item, latest[index] ?? null, apiUrl),
+				),
+			})
+		},
+	)
+
+	// Which listing installed packs came from, by manifest header UUID.
+	app.post(
+		'/packs/lookup',
+		bodyLimit({
+			maxSize: MAX_UPDATE_BODY_BYTES,
+			onError: () => {
+				throw invalidParameter('uuids', 'the request is too large')
+			},
+		}),
+		async (c) => {
+			const uuids = readPackUuids(await c.req.json().catch(() => null))
+			const packs = await runQuery<PackLookupDoc[]>(QUERIES.packLookup, {
+				uuids,
+			})
+			c.header('Cache-Control', 'no-store')
+			return c.json({
+				data: uuids.map((uuid, index) =>
+					toPackLookupView(uuid, packs[index] ?? null, hubUrl),
 				),
 			})
 		},

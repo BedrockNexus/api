@@ -234,7 +234,11 @@ const contentSummaryProperties = {
 	stats: object({
 		averageRating: number,
 		downloads: integer,
-		favourites: integer,
+		favourites: {
+			description: 'Older name for `followers`; the same number.',
+			type: 'integer',
+		},
+		followers: integer,
 		reviews: integer,
 	}),
 	summary: string,
@@ -314,6 +318,19 @@ const releaseProperties = {
 	version: string,
 }
 
+const compatibilityProperties = {
+	minEngineVersion: {
+		description:
+			'The highest `min_engine_version` in the pack manifests. Read from the file; not a gameplay test. Null for plugins and older releases.',
+		type: ['string', 'null'],
+	},
+	breakingChanges: {
+		description:
+			'The publisher says this release can break worlds or packs made for an earlier one.',
+		type: 'boolean',
+	},
+}
+
 const serverSummaryProperties = {
 	address: object({ host: string, port: integer }),
 	bannerUrl: nullableString,
@@ -333,7 +350,11 @@ const serverSummaryProperties = {
 	slug: string,
 	stats: object({
 		averageRating: number,
-		favourites: integer,
+		favourites: {
+			description: 'Older name for `followers`; the same number.',
+			type: 'integer',
+		},
+		followers: integer,
 		reviews: integer,
 	}),
 	status: object({
@@ -398,7 +419,14 @@ export const catalogOpenApiDocument = {
 				latestVersion: nullableString,
 				release: {
 					description: 'The newest public release, if any.',
-					oneOf: [{ type: 'null' }, object(releaseProperties)],
+					oneOf: [
+						{ type: 'null' },
+						object({
+							...releaseProperties,
+							...compatibilityProperties,
+							dependencies: arrayOf(ref('Dependency')),
+						}),
+					],
 				},
 				section: { enum: UPDATE_SECTIONS, type: 'string' },
 				slug: nullableString,
@@ -414,7 +442,54 @@ export const catalogOpenApiDocument = {
 				slug: string,
 			}),
 			CategorySummary: object({ name: string, slug: string }),
-			ContentRelease: object({ ...releaseProperties, downloads: integer }),
+			ContentRelease: object({
+				...releaseProperties,
+				...compatibilityProperties,
+				downloads: integer,
+			}),
+			Dependency: object({
+				kind: {
+					description:
+						'`required`: install it too. `optional`: works with it. `incompatible`: do not install both.',
+					enum: ['required', 'optional', 'incompatible'],
+					type: 'string',
+				},
+				source: {
+					description:
+						'`manifest`: read from the pack manifest. `creator`: declared by the publisher.',
+					enum: ['creator', 'manifest'],
+					type: 'string',
+				},
+				section: {
+					description: 'Set when the dependency is a BedrockNexus listing.',
+					enum: [...UPDATE_SECTIONS, null],
+					type: ['string', 'null'],
+				},
+				id: nullableString,
+				name: nullableString,
+				url: {
+					description: 'External link, for dependencies not on BedrockNexus.',
+					type: ['string', 'null'],
+				},
+				packUuid: {
+					description:
+						'A pack the manifest needs that no public listing contains.',
+					type: ['string', 'null'],
+				},
+				packVersion: nullableString,
+			}),
+			PackLookup: object({
+				uuid: string,
+				found: { type: 'boolean' },
+				section: {
+					enum: ['addons', 'resource-packs', null],
+					type: ['string', 'null'],
+				},
+				id: nullableString,
+				slug: nullableString,
+				name: nullableString,
+				url: { description: 'Page on BedrockNexus.', type: ['string', 'null'] },
+			}),
 			Error: object({
 				error: object({
 					code: {
@@ -637,6 +712,39 @@ export const catalogOpenApiDocument = {
 					'503': { $ref: '#/components/responses/503' },
 				},
 				summary: 'The newest release of up to 100 installed items',
+			},
+		},
+		'/v1/packs/lookup': {
+			post: {
+				requestBody: {
+					content: {
+						'application/json': {
+							schema: object({
+								uuids: {
+									description: 'Pack header UUIDs from installed manifests.',
+									items: { type: 'string' },
+									maxItems: 100,
+									minItems: 1,
+									type: 'array',
+								},
+							}),
+						},
+					},
+					required: true,
+				},
+				responses: {
+					'200': {
+						content: {
+							'application/json': { schema: listOf(ref('PackLookup')) },
+						},
+						description:
+							'One result per UUID, in request order. A UUID belongs to the listing that published it first.',
+					},
+					'400': { $ref: '#/components/responses/400' },
+					'429': { $ref: '#/components/responses/429' },
+					'503': { $ref: '#/components/responses/503' },
+				},
+				summary: 'Which listings up to 100 installed packs came from',
 			},
 		},
 		'/v1/servers/{reference}': get(

@@ -31,6 +31,10 @@ export interface ArtifactValidationReport {
 	filesTruncated?: boolean
 	scriptModules?: ArtifactInspectionReport['scriptModules']
 	findings?: ArtifactInspectionReport['findings']
+	/** Each manifest's header (UUID, version, minimum game version). */
+	packs?: ArtifactInspectionReport['packs']
+	/** Packs the archive needs that it does not contain, by UUID. */
+	packDependencies?: ArtifactInspectionReport['packDependencies']
 }
 
 export type ArtifactValidationResult =
