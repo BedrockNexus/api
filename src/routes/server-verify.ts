@@ -10,6 +10,7 @@ import {
 import { requireApiKey } from '../middleware/api-key'
 
 const VERIFICATION_PREFIX = 'bedrocknexus-verify='
+const MOTD_VERIFICATION_PREFIX = 'bedrocknexus-verify-'
 const VERIFICATION_BEDROCK_TIMEOUT_MS = 8000
 
 type VerificationMethod = 'dns_txt' | 'motd_token'
@@ -77,6 +78,24 @@ async function verifyDnsRecord(
 	return { verified: true }
 }
 
+/**
+ * True when either MOTD line carries the code, as `bedrocknexus-verify-CODE`
+ * or the DNS form `bedrocknexus-verify=CODE`. The hyphen form exists because
+ * Bedrock Dedicated Server cuts a `server.properties` value at the next `=`,
+ * so the `=` form can never appear in its `server-name`.
+ */
+export function motdHasVerificationToken(
+	lines: ReadonlyArray<string | undefined>,
+	code: string,
+): boolean {
+	const text = lines.filter(Boolean).join('\n').toLowerCase()
+	const lowerCode = code.toLowerCase()
+	return (
+		text.includes(`${MOTD_VERIFICATION_PREFIX}${lowerCode}`) ||
+		text.includes(`${VERIFICATION_PREFIX}${lowerCode}`)
+	)
+}
+
 async function verifyMotd(
 	host: string,
 	port: number,
@@ -93,16 +112,16 @@ async function verifyMotd(
 			verified: false,
 		}
 	}
-	const expectedToken = `${VERIFICATION_PREFIX}${code}`.toLowerCase()
-	const searchableMotd = [server.motd, server.mapName]
-		.filter(Boolean)
-		.join('\n')
-		.toLowerCase()
-	const verified = searchableMotd.includes(expectedToken)
+	const verified = motdHasVerificationToken([server.motd, server.mapName], code)
 
 	if (!verified) {
+		const partial = [server.motd, server.mapName].some((line) =>
+			line?.toLowerCase().includes('bedrocknexus-verify'),
+		)
 		return {
-			error: 'The verification token was not found in the server MOTD',
+			error: partial
+				? 'The MOTD has an incomplete or different verification token. Copy the whole token shown on the page, with its code, and make sure it is your current code.'
+				: 'The verification token was not found in the server MOTD',
 			verified: false,
 		}
 	}
