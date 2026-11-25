@@ -1,0 +1,38 @@
+name: Image
+
+# Builds the API and validator images and pushes them to GHCR. Nothing is
+# deployed from here: production is redeployed by hand in Coolify, which only
+# pulls these images. Coolify must not build this repository from source: two
+# builds at once ran the server out of memory.
+# Pipeline: https://github.com/BedrockNexus/github-actions
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    uses: BedrockNexus/github-actions/.github/workflows/docker-build.yml@main
+    with:
+      push: true
+      target: runner
+      test-target: test
+
+  # After the API, so the validator is only published once the tests pass.
+  validator:
+    needs: api
+    uses: BedrockNexus/github-actions/.github/workflows/docker-build.yml@main
+    with:
+      push: true
+      target: validator
+      image-name: ghcr.io/bedrocknexus/api-validator

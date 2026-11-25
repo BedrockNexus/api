@@ -274,15 +274,15 @@ Convex retries validation instead of deleting an artifact as malformed.
 
 ## Deployment
 
-Pushes to `main` run `Deploy`: GitHub Actions builds the Dockerfile's `test`
+Pushes to `main` run `Image`: GitHub Actions builds the Dockerfile's `test`
 stage, then two images, and pushes them to GHCR:
 
 - `ghcr.io/bedrocknexus/api` (stage `runner`), the public API;
 - `ghcr.io/bedrocknexus/api-validator` (stage `validator`), the artifact
   validator: the same code, started with `src/worker.ts`.
 
-Each then triggers its Coolify application through `COOLIFY_WEBHOOK` and
-`COOLIFY_WEBHOOK_WORKER`, the validator after the API. Both applications are
+Nothing is deployed from GitHub Actions. To release, redeploy the API and
+then the validator in Coolify once the run has finished. Both applications are
 *Docker Image* deployments: Coolify only pulls, and must not build this
 repository from source, since two builds at once run the server out of
 memory. `Quality` runs lint, typecheck and tests on pull requests and `main`.
